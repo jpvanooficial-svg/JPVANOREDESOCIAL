@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { db } from "../lib/firebase";
 import { UserProfile, Post, Comment } from "../types";
 import { sendAppNotification } from "../lib/notifications";
+import StoriesSection from "./StoriesSection";
 import {
   collection,
   onSnapshot,
@@ -653,6 +654,9 @@ export default function FeedSection({
           </div>
         </div>
       </div>
+
+      {/* STORIES BAR */}
+      <StoriesSection currentUserProfile={currentUserProfile} onUserSelect={onUserSelect} />
 
       {/* FEED LISTINGS */}
       <div className="space-y-6">

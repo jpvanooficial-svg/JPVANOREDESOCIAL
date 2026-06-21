@@ -1,14 +1,10 @@
 // Web Audio API Synthesizer for high-precision real-time sound effects
 // Completely asset-free, safe, with adjustable volume settings configured in localStorage
 
-export const playNotificationSound = (
-  type: "like" | "comment" | "follow" | "message" | "test"
-) => {
-  // Check if sound is disabled in user local setting
-  const isSoundEnabled = localStorage.getItem("jpvano_sound_enabled") !== "false";
-  if (!isSoundEnabled) return;
+export type AudioTone = "bubble_pop" | "harmonic_sweep" | "arpeggio" | "bell_chime" | "electronic_ping" | "none";
 
-  const volumePct = parseFloat(localStorage.getItem("jpvano_sound_volume") || "0.5");
+export const playTone = (tone: AudioTone, volumePct: number = 0.5) => {
+  if (tone === "none") return;
 
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -20,25 +16,22 @@ export const playNotificationSound = (
 
     osc.connect(gainNode);
     gainNode.connect(ctx.destination);
-
-    // Default global volume multiplier
     gainNode.gain.setValueAtTime(0, ctx.currentTime);
 
-    if (type === "like") {
+    if (tone === "bubble_pop") {
       // Warm quick retro bubble double pop
       osc.type = "sine";
-      // Pop 1
       osc.frequency.setValueAtTime(400, ctx.currentTime);
       gainNode.gain.linearRampToValueAtTime(0.3 * volumePct, ctx.currentTime + 0.02);
       gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
-      // Pop 2
+      
       osc.frequency.setValueAtTime(600, ctx.currentTime + 0.1);
       gainNode.gain.linearRampToValueAtTime(0.4 * volumePct, ctx.currentTime + 0.12);
       gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
       
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.26);
-    } else if (type === "comment") {
+    } else if (tone === "harmonic_sweep") {
       // Sweet organic major third slide
       osc.type = "triangle";
       osc.frequency.setValueAtTime(329.63, ctx.currentTime); // E4
@@ -49,7 +42,7 @@ export const playNotificationSound = (
       
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.32);
-    } else if (type === "follow") {
+    } else if (tone === "arpeggio") {
       // Energetic up-sweep arpeggio
       osc.type = "sine";
       const notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
@@ -63,8 +56,8 @@ export const playNotificationSound = (
       
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.35);
-    } else if (type === "message") {
-      // Professional triple tap chord
+    } else if (tone === "bell_chime") {
+      // Glass bell chime chord
       osc.type = "sine";
       const osc2 = ctx.createOscillator();
       const gain2 = ctx.createGain();
@@ -86,17 +79,49 @@ export const playNotificationSound = (
       osc2.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.22);
       osc2.stop(ctx.currentTime + 0.22);
-    } else {
-      // Testing/general chime chime
+    } else if (tone === "electronic_ping") {
+      // Soft high sweet electronic ping
       osc.type = "sine";
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-      gainNode.gain.linearRampToValueAtTime(0.3 * volumePct, ctx.currentTime + 0.05);
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      gainNode.gain.linearRampToValueAtTime(0.25 * volumePct, ctx.currentTime + 0.02);
       gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
       
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.42);
     }
   } catch (error) {
-    console.warn("Audio Context init blocked or failed:", error);
+    console.warn("Audio Context error:", error);
   }
+};
+
+export const playNotificationSound = (
+  type: "like" | "comment" | "follow" | "message" | "test",
+  overrideTone?: AudioTone
+) => {
+  // Check if sound is disabled in user local setting
+  const isSoundEnabled = localStorage.getItem("jpvano_sound_enabled") !== "false";
+  if (!isSoundEnabled) return;
+
+  const volumePct = parseFloat(localStorage.getItem("jpvano_sound_volume") || "0.5");
+
+  if (overrideTone) {
+    playTone(overrideTone, volumePct);
+    return;
+  }
+
+  // Get configured tone or its legacy mapping
+  let tone: AudioTone = "bubble_pop";
+  if (type === "like") {
+    tone = (localStorage.getItem("jpvano_tone_like") || "bubble_pop") as AudioTone;
+  } else if (type === "comment") {
+    tone = (localStorage.getItem("jpvano_tone_comment") || "harmonic_sweep") as AudioTone;
+  } else if (type === "follow") {
+    tone = (localStorage.getItem("jpvano_tone_follow") || "arpeggio") as AudioTone;
+  } else if (type === "message") {
+    tone = (localStorage.getItem("jpvano_tone_message") || "bell_chime") as AudioTone;
+  } else if (type === "test") {
+    tone = "electronic_ping";
+  }
+
+  playTone(tone, volumePct);
 };

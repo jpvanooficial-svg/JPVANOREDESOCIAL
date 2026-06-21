@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { db } from "../lib/firebase";
 import { AppNotification, UserProfile } from "../types";
-import { playNotificationSound } from "../lib/audio";
+import { playNotificationSound, playTone, AudioTone } from "../lib/audio";
 import {
   collection,
   query,
@@ -25,6 +25,8 @@ import {
   VolumeX,
   Volume1,
   CheckCheck,
+  Sliders,
+  Settings,
 } from "lucide-react";
 
 interface NotificationsSectionProps {
@@ -46,6 +48,22 @@ export default function NotificationsSection({
     return parseFloat(localStorage.getItem("jpvano_sound_volume") || "0.5");
   });
 
+  // Settings Dashboard States
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pushPermission, setPushPermission] = useState<NotificationPermission>(() => {
+    return typeof Notification !== "undefined" ? Notification.permission : "default";
+  });
+
+  const [toneLike, setToneLike] = useState(() => localStorage.getItem("jpvano_tone_like") || "bubble_pop");
+  const [toneComment, setToneComment] = useState(() => localStorage.getItem("jpvano_tone_comment") || "harmonic_sweep");
+  const [toneFollow, setToneFollow] = useState(() => localStorage.getItem("jpvano_tone_follow") || "arpeggio");
+  const [toneMessage, setToneMessage] = useState(() => localStorage.getItem("jpvano_tone_message") || "bell_chime");
+
+  const [pushLike, setPushLike] = useState(() => localStorage.getItem("jpvano_push_like") !== "false");
+  const [pushComment, setPushComment] = useState(() => localStorage.getItem("jpvano_push_comment") !== "false");
+  const [pushFollow, setPushFollow] = useState(() => localStorage.getItem("jpvano_push_follow") !== "false");
+  const [pushMessage, setPushMessage] = useState(() => localStorage.getItem("jpvano_push_message") !== "false");
+
   // Track if we have already played sound for loaded notification, to prevent audio replay on refresh
   const loadedNotificationsRef = useRef<Record<string, boolean>>({});
 
@@ -58,18 +76,10 @@ export default function NotificationsSection({
     // Snapshot database watcher
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: AppNotification[] = [];
-      let hasNewUnread = false;
-      let lastIncomingType: any = null;
 
       snapshot.forEach((d) => {
         const notif = { id: d.id, ...d.data() } as AppNotification;
         list.push(notif);
-
-        // Check if there is an unread notification we haven't seen in this session yet
-        if (!notif.read && !loadedNotificationsRef.current[notif.id]) {
-          hasNewUnread = true;
-          lastIncomingType = notif.type;
-        }
 
         // Lock it as seen so we don't replay chime on database re-read
         loadedNotificationsRef.current[notif.id] = true;
@@ -83,15 +93,59 @@ export default function NotificationsSection({
       });
 
       setNotifications(list);
-
-      // Play custom node chimes inside sound queue
-      if (hasNewUnread && lastIncomingType) {
-        playNotificationSound(lastIncomingType);
-      }
     });
 
     return () => unsubscribe();
   }, [currentUserProfile.id]);
+
+  // Request native OS notification permissions
+  const requestPushPermission = async () => {
+    if (!("Notification" in window)) {
+      alert("Seu navegador não oferece suporte para notificações nativas de desktop.");
+      return;
+    }
+    try {
+      const status = await Notification.requestPermission();
+      setPushPermission(status);
+    } catch (err) {
+      console.error("Erro de permissão push:", err);
+    }
+  };
+
+  // Sound configuration helpers
+  const handleToneChange = (category: "like" | "comment" | "follow" | "message", val: string) => {
+    localStorage.setItem(`jpvano_tone_${category}`, val);
+    if (category === "like") setToneLike(val);
+    if (category === "comment") setToneComment(val);
+    if (category === "follow") setToneFollow(val);
+    if (category === "message") setToneMessage(val);
+
+    // Live preview of custom synth tone
+    playTone(val as any, soundVolume);
+  };
+
+  const handlePushToggle = (category: "like" | "comment" | "follow" | "message") => {
+    if (category === "like") {
+      const next = !pushLike;
+      setPushLike(next);
+      localStorage.setItem("jpvano_push_like", String(next));
+    }
+    if (category === "comment") {
+      const next = !pushComment;
+      setPushComment(next);
+      localStorage.setItem("jpvano_push_comment", String(next));
+    }
+    if (category === "follow") {
+      const next = !pushFollow;
+      setPushFollow(next);
+      localStorage.setItem("jpvano_push_follow", String(next));
+    }
+    if (category === "message") {
+      const next = !pushMessage;
+      setPushMessage(next);
+      localStorage.setItem("jpvano_push_message", String(next));
+    }
+  };
 
   // Sync settings values to localStorage
   const handleToggleSound = () => {
@@ -180,48 +234,265 @@ export default function NotificationsSection({
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 md:p-6 shadow-xl space-y-6">
         
         {/* TITLE & SOUND OPTIONS */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-zinc-800 pb-5">
-          <div className="flex items-center gap-3">
-            <span className="p-2 bg-purple-600/10 rounded-xl text-purple-400">
-              <Bell className="h-6 w-6" />
-            </span>
-            <div>
-              <h1 className="text-2xl font-bold text-white font-display">Notificações</h1>
-              <p className="text-xs text-zinc-400">Notificações em tempo real com sons customizados</p>
+        <div className="flex flex-col border-b border-zinc-800 pb-5 space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span className="p-2 bg-purple-600/10 rounded-xl text-purple-400">
+                <Bell className="h-6 w-6" />
+              </span>
+              <div>
+                <h1 className="text-2xl font-bold text-white font-display">Notificações</h1>
+                <p className="text-xs text-zinc-400">Sons e push customizados para likes, comentários, DMs e seguidores</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 bg-zinc-950 p-2 rounded-xl border border-zinc-800 w-full sm:w-auto">
+              <button
+                id="sound-config-mute-btn"
+                onClick={handleToggleSound}
+                className={`p-2 rounded-lg transition-all cursor-pointer ${
+                  soundEnabled
+                    ? "bg-purple-600/10 text-purple-400 hover:bg-purple-600/20"
+                    : "bg-zinc-800 text-zinc-500 hover:text-white"
+                }`}
+                title={soundEnabled ? "Mutar Sons" : "Ativar Sons"}
+              >
+                {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              </button>
+
+              {soundEnabled && (
+                <div className="flex items-center gap-1.5 pr-2">
+                  <Volume1 className="h-3.5 w-3.5 text-zinc-400" />
+                  <input
+                    id="sound-volume-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    value={soundVolume}
+                    onChange={handleChangeVolume}
+                    className="w-16 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    title="Volume"
+                  />
+                </div>
+              )}
+
+              {/* TOGGLING EXPANDABLE SETTINGS PANEL BUTTON */}
+              <button
+                id="toggle-pref-dashboard-btn"
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                className={`p-2 rounded-lg flex items-center gap-1 cursor-pointer transition-all ${
+                  settingsOpen
+                    ? "bg-purple-500 text-white font-bold"
+                    : "bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300"
+                }`}
+                title="Configurar Notificações"
+              >
+                <Settings className={`h-4 w-4 ${settingsOpen ? "animate-spin" : ""}`} />
+                <span className="text-xs hidden sm:inline">Configurações</span>
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-4 bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 w-full sm:w-auto">
-            <button
-              id="sound-config-mute-btn"
-              onClick={handleToggleSound}
-              className={`p-2 rounded-lg transition-all cursor-pointer ${
-                soundEnabled
-                  ? "bg-purple-600/10 text-purple-400 hover:bg-purple-600/20"
-                  : "bg-zinc-800 text-zinc-500 hover:text-white"
-              }`}
-              title={soundEnabled ? "Mutar Sons" : "Ativar Sons"}
-            >
-              {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-            </button>
+          {/* HIDDEN PREFERENCES ACCORDION CARDS PANEL */}
+          {settingsOpen && (
+            <div className="bg-zinc-950/80 p-4 rounded-xl border border-zinc-800/80 animate-fade-in text-xs space-y-4 font-sans select-none">
+              
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-zinc-900 pb-3">
+                <div>
+                  <span className="text-zinc-300 font-bold font-display block">Alerta Push & Canal Nativo:</span>
+                  <span className="text-[10px] text-zinc-550 block">Receba notificações instantâneas no desktop mesmo com o app minimizado</span>
+                </div>
 
-            {soundEnabled && (
-              <div className="flex items-center gap-2">
-                <Volume1 className="h-3.5 w-3.5 text-zinc-400" />
-                <input
-                  id="sound-volume-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={soundVolume}
-                  onChange={handleChangeVolume}
-                  className="w-16 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                  title="Volume"
-                />
+                <div>
+                  {pushPermission === "granted" ? (
+                    <span className="bg-emerald-500/10 text-emerald-400 p-1 px-3 text-[10px] rounded-full font-black border border-emerald-500/20 block">
+                      ✓ PERMISSÃO CONCEDIDA
+                    </span>
+                  ) : pushPermission === "denied" ? (
+                    <span className="bg-rose-500/10 text-rose-400 p-1 px-3 text-[10px] rounded-full font-bold border border-rose-500/20 block" title="Vá em configurações do navegador para desbloquear.">
+                      ⚠ BLOQUEADO NO NAVEGADOR
+                    </span>
+                  ) : (
+                    <button
+                      id="opt-request-push-perm-btn"
+                      type="button"
+                      onClick={requestPushPermission}
+                      className="p-1.5 px-3 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-500 transition-all cursor-pointer text-[10px]"
+                    >
+                      ATIVAR CANAL NATIVO
+                    </button>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* PREFERENCES PANEL SETTINGS FOR DIFFERENT EVENT TYPES */}
+              <div className="space-y-4">
+                <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider block">Estilos para cada tipo de Interação:</span>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2">
+                  
+                  {/* LIKE SETTING */}
+                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1 rounded bg-rose-550/10 text-rose-500">
+                          <Heart className="h-3.5 w-3.5 fill-rose-500" />
+                        </span>
+                        <span className="font-bold text-zinc-100 font-display">Curtidas (Likes)</span>
+                      </div>
+                      
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pushLike}
+                          onChange={() => handlePushToggle("like")}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-zinc-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                        <span className="text-[10px] text-zinc-400 font-bold ml-1.5">Push</span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2.5">
+                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <select
+                        value={toneLike}
+                        onChange={(e) => handleToneChange("like", e.target.value)}
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                      >
+                        <option value="bubble_pop">Bubble Pop 🫧</option>
+                        <option value="harmonic_sweep">Slide Orgânico 🎼</option>
+                        <option value="arpeggio">Arpejo 🎹</option>
+                        <option value="bell_chime">Sino Cristal 🔔</option>
+                        <option value="electronic_ping">Ping Agudo 📡</option>
+                        <option value="none">Silencioso (Nenhum)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* COMMENT SETTING */}
+                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1 rounded bg-purple-550/10 text-purple-400">
+                          <MessageSquare className="h-3.5 w-3.5 fill-purple-400/20" />
+                        </span>
+                        <span className="font-bold text-zinc-100 font-display">Comentários</span>
+                      </div>
+                      
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pushComment}
+                          onChange={() => handlePushToggle("comment")}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-zinc-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                        <span className="text-[10px] text-zinc-400 font-bold ml-1.5">Push</span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2.5">
+                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <select
+                        value={toneComment}
+                        onChange={(e) => handleToneChange("comment", e.target.value)}
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                      >
+                        <option value="bubble_pop">Bubble Pop 🫧</option>
+                        <option value="harmonic_sweep">Slide Orgânico 🎼</option>
+                        <option value="arpeggio">Arpejo 🎹</option>
+                        <option value="bell_chime">Sino Cristal 🔔</option>
+                        <option value="electronic_ping">Ping Agudo 📡</option>
+                        <option value="none">Silencioso (Nenhum)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* FOLLOW SETTING */}
+                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1 rounded bg-blue-550/10 text-blue-400">
+                          <UserPlus className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="font-bold text-zinc-100 font-display">Seguidores</span>
+                      </div>
+                      
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pushFollow}
+                          onChange={() => handlePushToggle("follow")}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-zinc-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                        <span className="text-[10px] text-zinc-400 font-bold ml-1.5">Push</span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2.5">
+                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <select
+                        value={toneFollow}
+                        onChange={(e) => handleToneChange("follow", e.target.value)}
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                      >
+                        <option value="bubble_pop">Bubble Pop 🫧</option>
+                        <option value="harmonic_sweep">Slide Orgânico 🎼</option>
+                        <option value="arpeggio">Arpejo 🎹</option>
+                        <option value="bell_chime">Sino Cristal 🔔</option>
+                        <option value="electronic_ping">Ping Agudo 📡</option>
+                        <option value="none">Silencioso (Nenhum)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* PRIVATE MESSAGE SETTING */}
+                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1 rounded bg-amber-550/10 text-amber-500">
+                          <Mail className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="font-bold text-zinc-100 font-display">Mensagens DMs</span>
+                      </div>
+                      
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pushMessage}
+                          onChange={() => handlePushToggle("message")}
+                          className="sr-only peer"
+                        />
+                        <div className="w-7 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-zinc-300 after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-purple-600"></div>
+                        <span className="text-[10px] text-zinc-400 font-bold ml-1.5">Push</span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2.5">
+                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <select
+                        value={toneMessage}
+                        onChange={(e) => handleToneChange("message", e.target.value)}
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                      >
+                        <option value="bubble_pop">Bubble Pop 🫧</option>
+                        <option value="harmonic_sweep">Slide Orgânico 🎼</option>
+                        <option value="arpeggio">Arpejo 🎹</option>
+                        <option value="bell_chime">Sino Cristal 🔔</option>
+                        <option value="electronic_ping">Ping Agudo 📡</option>
+                        <option value="none">Silencioso (Nenhum)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          )}
         </div>
 
         {/* CONTROLS BAR */}

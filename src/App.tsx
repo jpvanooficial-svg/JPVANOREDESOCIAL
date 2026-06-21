@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { auth, db } from "./lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { doc, onSnapshot, collection } from "firebase/firestore";
 import { UserProfile } from "./types";
+import { playNotificationSound } from "./lib/audio";
 import AuthScreen from "./components/AuthScreen";
 import ThemeToggle from "./components/ThemeToggle";
 import FeedSection from "./components/FeedSection";
@@ -73,22 +74,83 @@ export default function App() {
     return () => unsubProfile();
   }, [user]);
 
-  // 3. Watch real-time notification counters to highlight red alert indicators in tabs
+  // 3. Watch real-time notification counters & trigger global audio chimes / native push notifications
+  const loadedNotifsRef = useRef<Record<string, boolean>>({});
+
   useEffect(() => {
     if (!profile) return;
+
+    // Load initial ones first so we do not spam chime play on page loading
+    let populatedFirstRound = false;
 
     // Watch unread messages / notification badges in notifications collection
     const unsubUnread = onSnapshot(
       collection(db, "notifications"),
       (snap) => {
         let unreads = 0;
+        let hasNewUnread = false;
+        let newestIncoming: any = null;
+
         snap.forEach((d) => {
           const data = d.data();
-          if (data.recipientId === profile.id && !data.read) {
-            unreads++;
+          const id = d.id;
+
+          if (data.recipientId === profile.id) {
+            if (!data.read) {
+              unreads++;
+
+              // If it's a completely brand new notification doc and not seen before
+              if (populatedFirstRound && !loadedNotifsRef.current[id]) {
+                hasNewUnread = true;
+                newestIncoming = {
+                  id,
+                  type: data.type, // 'like' | 'comment' | 'follow' | 'message'
+                  senderUsername: data.senderUsername,
+                  text: data.text || "te enviou um alerta em tempo real!",
+                };
+              }
+            }
+            // Add to session cache list to prevent loops
+            loadedNotifsRef.current[id] = true;
           }
         });
+
+        // Toggle first run flat after parsing the snap
+        if (!populatedFirstRound) {
+          populatedFirstRound = true;
+        }
+
         setUnreadCount(unreads);
+
+        // Execute dynamic synthesized audio tone & direct OS browser native push notifications
+        if (hasNewUnread && newestIncoming) {
+          const { type, senderUsername, text } = newestIncoming;
+
+          // 1. Play category tone:
+          playNotificationSound(type);
+
+          // 2. Dispatch Native Browser Push Notification if permission is granted
+          if ("Notification" in window && Notification.permission === "granted") {
+            const pushEnabled = localStorage.getItem(`jpvano_push_${type}`) !== "false";
+            
+            if (pushEnabled) {
+              const categoryTitle = 
+                type === "message" ? `DM de @${senderUsername}` :
+                type === "like" ? `@${senderUsername} curtiu` :
+                type === "comment" ? `@${senderUsername} comentou` :
+                `@${senderUsername} te seguiu`;
+
+              const pNotif = new Notification(`JPvano: ${categoryTitle}`, {
+                body: text,
+                icon: "/favicon.ico",
+              });
+
+              pNotif.onclick = () => {
+                window.focus();
+              };
+            }
+          }
+        }
       }
     );
 
