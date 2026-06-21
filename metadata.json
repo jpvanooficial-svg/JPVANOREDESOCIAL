@@ -1,0 +1,8 @@
+{
+  "name": "JPvano",
+  "description": "Uma rede social completa em tempo real (Estilo Instagram + TikTok + Twitter) com moderação de conteúdo, feed global dinâmico e chat sincronizado.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
