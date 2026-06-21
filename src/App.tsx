@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { auth, db } from "./lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { doc, onSnapshot, collection } from "firebase/firestore";
+import { doc, onSnapshot, collection, query, where } from "firebase/firestore";
 import { UserProfile } from "./types";
 import { playNotificationSound } from "./lib/audio";
 import AuthScreen from "./components/AuthScreen";
@@ -11,6 +11,7 @@ import ChatSection from "./components/ChatSection";
 import NotificationsSection from "./components/NotificationsSection";
 import ProfileSection from "./components/ProfileSection";
 import AdminSection from "./components/AdminSection";
+import jpvanoLogo from "./assets/images/logo.jpg";
 import {
   Sparkles,
   Compass,
@@ -84,8 +85,12 @@ export default function App() {
     let populatedFirstRound = false;
 
     // Watch unread messages / notification badges in notifications collection
-    const unsubUnread = onSnapshot(
+    const qNotifs = query(
       collection(db, "notifications"),
+      where("recipientId", "==", profile.id)
+    );
+    const unsubUnread = onSnapshot(
+      qNotifs,
       (snap) => {
         let unreads = 0;
         let hasNewUnread = false;
@@ -160,8 +165,13 @@ export default function App() {
   if (appLoading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center font-sans">
-        <div className="inline-flex items-center justify-center p-3 rounded-2xl brand-gradient-bg mb-4 glow-logo shadow-lg">
-          <Sparkles className="h-10 w-10 text-white animate-spin" />
+        <div className="mb-4">
+          <img
+            src={jpvanoLogo}
+            alt="JPvano Loading..."
+            className="w-24 h-24 object-contain rounded-2xl border border-zinc-850 shadow-2xl animate-pulse glow-logo"
+            referrerPolicy="no-referrer"
+          />
         </div>
         <h2 className="text-xl font-bold font-display text-white tracking-widest animate-pulse">JPvano Social</h2>
         <p className="text-zinc-500 text-xs mt-1.5 leading-none">Carregando ambiente em tempo real...</p>
@@ -200,11 +210,19 @@ export default function App() {
     <div className="min-h-screen bg-zinc-950 dark:bg-zinc-950 light:bg-zinc-50 transition-colors text-zinc-100 dark:text-zinc-100 text-zinc-800 duration-200">
       
       {/* GLOBAL DESKTOP & MOBILE RESPONSIVE HEADER BAR */}
-      <header className="sticky top-0 z-40 bg-zinc-900 border-b border-zinc-800 backdrop-blur-md bg-opacity-80 px-4 md:px-8 py-4 flex items-center justify-between select-none">
+      <header className="sticky top-0 z-40 bg-zinc-900 border-b border-zinc-800 backdrop-blur-md bg-opacity-80 px-4 md:px-8 py-3 flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-xl brand-gradient-bg shadow Glow-logo animate-pulse">
-            <Sparkles className="h-5 w-5 text-white" />
-          </div>
+          <img
+            src={jpvanoLogo}
+            alt="JPvano Logo"
+            className="w-9 h-9 object-contain rounded-lg border border-zinc-800 shadow cursor-pointer hover:scale-105 transition-all"
+            onClick={() => {
+              setSelectedProfileId(null);
+              setSelectedPostId(null);
+              setActiveTab("feed");
+            }}
+            referrerPolicy="no-referrer"
+          />
           <span
             onClick={() => {
               setSelectedProfileId(null);

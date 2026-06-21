@@ -4,6 +4,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
 } from "firebase/auth";
 import {
   doc,
@@ -15,6 +17,7 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { LogIn, UserPlus, HelpCircle, Loader2, KeyRound, Sparkles } from "lucide-react";
+import jpvanoLogo from "../assets/images/logo.jpg";
 
 const PRESET_AVATARS = [
   "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
@@ -38,6 +41,28 @@ export default function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const getFriendlyErrorMessage = (err: any) => {
+    const code = err?.code || "";
+    const message = err?.message || "";
+    
+    if (code === "auth/operation-not-allowed" || message.includes("operation-not-allowed")) {
+      return "O provedor de login com 'E-mail/Senha' está desativado no console do Firebase. Ative-o acessando o Console do Firebase > Authentication > Sign-in method > E-mail/Senha para permitir cadastro/login por e-mail, ou utilize o botão 'Entrar com o Google' abaixo.";
+    }
+    if (code === "auth/email-already-in-use" || message.includes("email-already-in-use") || message.includes("auth/email-already-in-use")) {
+      return "Este e-mail já está sendo utilizado por outra conta. Faça login ou use outro e-mail.";
+    }
+    if (code === "auth/weak-password" || message.includes("weak-password") || message.includes("auth/weak-password")) {
+      return "A senha é muito fraca. Ela deve conter pelo menos 6 caracteres.";
+    }
+    if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential" || message.includes("user-not-found") || message.includes("wrong-password") || message.includes("invalid-credential")) {
+      return "E-mail ou senha incorretos. Por favor, tente novamente.";
+    }
+    if (code === "auth/popup-closed-by-user" || message.includes("popup-closed-by-user") || message.includes("popup_closed_by_user")) {
+      return "A janela de login do Google foi fechada antes de concluir a autenticação.";
+    }
+    return message || "Ocorreu um erro ao processar sua solicitação. Tente novamente.";
+  };
+
   // Handle uploading custom profile photo via server proxy
   const handleCustomAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -59,6 +84,62 @@ export default function AuthScreen() {
       reader.readAsDataURL(file);
     } catch (err) {
       setError("Erro ao ler imagem local");
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists()) {
+        const cleanUsername = user.displayName
+          ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, "") + Math.floor(Math.random() * 1000)
+          : "user_" + Math.floor(Math.random() * 10000);
+          
+        const emailLower = (user.email || "").toLowerCase();
+        let role: "root_admin" | "admin" | "user" = "user";
+        let verified = false;
+
+        if (emailLower === "joaopedromoladeoliveira@gmail.com") {
+          role = "root_admin";
+          verified = true;
+        } else if (emailLower === "jpvanoredesocial@gmail.com") {
+          role = "admin";
+          verified = true;
+        }
+
+        await setDoc(userRef, {
+          id: user.uid,
+          username: cleanUsername,
+          email: emailLower,
+          photoURL: user.photoURL || PRESET_AVATARS[0],
+          bannerURL: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&h=400&q=80",
+          bio: `Olá, sou ${user.displayName || cleanUsername}! Bem-vindo ao JPvano Social.`,
+          link: "",
+          verified,
+          role,
+          restricted: false,
+          createdAt: new Date().toISOString(),
+        });
+      } else {
+        const profile = userSnap.data();
+        if (profile.restricted) {
+          await auth.signOut();
+          setError("Esta conta está suspensa por violar as diretrizes da comunidade.");
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(getFriendlyErrorMessage(err));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -86,11 +167,7 @@ export default function AuthScreen() {
       }
     } catch (err: any) {
       console.error(err);
-      if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-        setError("Email ou senha incorretos.");
-      } else {
-        setError(err.message || "Erro ao fazer login");
-      }
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -177,13 +254,7 @@ export default function AuthScreen() {
 
     } catch (err: any) {
       console.error(err);
-      if (err.code === "auth/email-already-in-use") {
-        setError("Este endereço de e-mail já está cadastrado.");
-      } else if (err.code === "auth/weak-password") {
-        setError("A senha deve conter pelo menos 6 caracteres.");
-      } else {
-        setError(err.message || "Erro no cadastro de conta.");
-      }
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -204,7 +275,7 @@ export default function AuthScreen() {
       await sendPasswordResetEmail(auth, email.trim());
       setMsg("Link de redefinição enviado com sucesso para o e-mail informado!");
     } catch (err: any) {
-      setError(err.message || "Erro ao solicitar recuperação");
+      setError(getFriendlyErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -219,13 +290,15 @@ export default function AuthScreen() {
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 md:p-8 shadow-2xl relative z-10 transition-all">
         {/* LOGO */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center p-3 rounded-2xl brand-gradient-bg mb-3 glow-logo shadow-lg">
-            <Sparkles className="h-8 w-8 text-white animate-pulse" />
+          <div className="flex justify-center mb-4">
+            <img
+              src={jpvanoLogo}
+              alt="JPvano Logo"
+              className="w-32 h-32 object-contain rounded-2xl shadow-xl border border-zinc-800 glow-logo"
+              referrerPolicy="no-referrer"
+            />
           </div>
-          <h1 className="text-3xl font-bold font-display tracking-tight text-white mt-1">
-            JP<span className="brand-gradient-text font-extrabold uppercase">vano</span>
-          </h1>
-          <p className="text-zinc-400 text-sm mt-1.5 font-sans">
+          <p className="text-zinc-400 text-sm font-sans mt-2">
             {mode === "login" && "Conecte, Compartilhe e Evolua"}
             {mode === "register" && "Crie sua conta para entrar na rede"}
             {mode === "forgot" && "Recuperação de acesso seguro"}
@@ -483,6 +556,38 @@ export default function AuthScreen() {
               )}
             </button>
           </form>
+        )}
+
+        {(mode === "login" || mode === "register") && (
+          <div className="mt-6 pt-5 border-t border-zinc-800/60 font-sans space-y-4">
+            <div className="relative flex py-2 items-center">
+              <div className="flex-grow border-t border-zinc-800"></div>
+              <span className="flex-shrink mx-4 text-xs text-zinc-500 uppercase tracking-widest">ou</span>
+              <div className="flex-grow border-t border-zinc-800"></div>
+            </div>
+
+            <button
+              id="google-signin-btn"
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+              className="w-full py-3 px-4 rounded-xl flex items-center justify-center gap-2.5 bg-zinc-950 hover:bg-zinc-850 border border-zinc-800 text-white font-semibold text-sm cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24">
+                <path
+                  fill="#EA4335"
+                  d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.245-3.125C18.28 1.84 15.42 1 12.24 1 6.01 1 1 6.01 1 12.24s5.01 11.24 11.24 11.24c6.5 0 10.82-4.57 10.82-11.02 0-.74-.08-1.3-.18-1.835H12.24z"
+                />
+              </svg>
+              <span>Entrar com o Google</span>
+            </button>
+
+            {error && error.includes("operation-not-allowed") && (
+              <div className="text-[11px] text-zinc-400 leading-relaxed bg-zinc-950/80 p-3 rounded-xl border border-zinc-800 text-left animate-fade-in">
+                💡 <strong className="text-zinc-200">Como resolver isto:</strong> Seu projeto Firebase não tem o provedor "E-mail/Senha" ativado. Ative-o acessando o painel de controle do Firebase em <span className="text-purple-400 font-mono">Authentication &gt; Sign-in method &gt; Adicionar provedor &gt; E-mail/Senha</span>.
+              </div>
+            )}
+          </div>
         )}
 
         {/* SWITCH MODES */}
