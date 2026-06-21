@@ -27,6 +27,8 @@ import {
   CheckCheck,
   Sliders,
   Settings,
+  Upload,
+  Loader2,
 } from "lucide-react";
 
 interface NotificationsSectionProps {
@@ -58,6 +60,7 @@ export default function NotificationsSection({
   const [toneComment, setToneComment] = useState(() => localStorage.getItem("jpvano_tone_comment") || "harmonic_sweep");
   const [toneFollow, setToneFollow] = useState(() => localStorage.getItem("jpvano_tone_follow") || "arpeggio");
   const [toneMessage, setToneMessage] = useState(() => localStorage.getItem("jpvano_tone_message") || "bell_chime");
+  const [uploadingCategory, setUploadingCategory] = useState<string | null>(null);
 
   const [pushLike, setPushLike] = useState(() => localStorage.getItem("jpvano_push_like") !== "false");
   const [pushComment, setPushComment] = useState(() => localStorage.getItem("jpvano_push_comment") !== "false");
@@ -93,6 +96,8 @@ export default function NotificationsSection({
       });
 
       setNotifications(list);
+    }, (error) => {
+      console.warn("Notifications onSnapshot query subscription error:", error);
     });
 
     return () => unsubscribe();
@@ -122,6 +127,46 @@ export default function NotificationsSection({
 
     // Live preview of custom synth tone
     playTone(val as any, soundVolume);
+  };
+
+  const uploadCustomTone = async (
+    category: "like" | "comment" | "follow" | "message",
+    file: File
+  ) => {
+    if (!file) return;
+    setUploadingCategory(category);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64 = reader.result as string;
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileData: base64,
+              originalMimeType: file.type,
+              extension: file.name.split(".").pop(),
+            })
+          });
+          const data = await res.json();
+          if (data.url) {
+            handleToneChange(category, data.url);
+          } else {
+            alert("Não foi possível processar o retorno do upload.");
+          }
+        } catch (e) {
+          console.error(e);
+          alert("Ocorreu um erro no processamento do arquivo de som.");
+        } finally {
+          setUploadingCategory(null);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+      setUploadingCategory(null);
+    }
   };
 
   const handlePushToggle = (category: "like" | "comment" | "follow" | "message") => {
@@ -333,13 +378,13 @@ export default function NotificationsSection({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2">
                   
                   {/* LIKE SETTING */}
-                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                  <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-zinc-850 space-y-2.5">
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         <span className="p-1 rounded bg-rose-550/10 text-rose-500">
                           <Heart className="h-3.5 w-3.5 fill-rose-500" />
                         </span>
-                        <span className="font-bold text-zinc-100 font-display">Curtidas (Likes)</span>
+                        <span className="font-bold text-zinc-100 font-display text-xs">Curtidas (Likes)</span>
                       </div>
                       
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -355,11 +400,11 @@ export default function NotificationsSection({
                     </div>
 
                     <div className="flex items-center justify-between gap-2.5">
-                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <span className="text-[10px] text-zinc-500 text-left shrink-0">Som do Alerta:</span>
                       <select
                         value={toneLike}
                         onChange={(e) => handleToneChange("like", e.target.value)}
-                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-semibold focus:ring-1 focus:ring-purple-600 outline-none max-w-[130px] truncate"
                       >
                         <option value="bubble_pop">Bubble Pop 🫧</option>
                         <option value="harmonic_sweep">Slide Orgânico 🎼</option>
@@ -367,18 +412,51 @@ export default function NotificationsSection({
                         <option value="bell_chime">Sino Cristal 🔔</option>
                         <option value="electronic_ping">Ping Agudo 📡</option>
                         <option value="none">Silencioso (Nenhum)</option>
+                        {(toneLike.startsWith("/") || toneLike.startsWith("http")) && (
+                          <option value={toneLike}>Personalizado 🎵</option>
+                        )}
                       </select>
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-850/60 flex flex-col gap-1.5">
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight block">Som Personalizado (.mp3):</span>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          id="file-upload-like"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) uploadCustomTone("like", file);
+                          }}
+                        />
+                        <label
+                          htmlFor="file-upload-like"
+                          className="w-full py-2 px-2.5 rounded bg-zinc-950 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5 select-none transition-all leading-none"
+                        >
+                          {uploadingCategory === "like" ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                          ) : (
+                            <Upload className="h-3 w-3 text-zinc-500" />
+                          )}
+                          <span>Enviar Toque 📁</span>
+                        </label>
+                      </div>
+                      {(toneLike.startsWith("/") || toneLike.startsWith("http")) && (
+                        <div className="text-[9px] text-emerald-400 font-bold block leading-none">✓ Toque personalizado ativo!</div>
+                      )}
                     </div>
                   </div>
 
                   {/* COMMENT SETTING */}
-                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                  <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-zinc-850 space-y-2.5">
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         <span className="p-1 rounded bg-purple-550/10 text-purple-400">
                           <MessageSquare className="h-3.5 w-3.5 fill-purple-400/20" />
                         </span>
-                        <span className="font-bold text-zinc-100 font-display">Comentários</span>
+                        <span className="font-bold text-zinc-100 font-display text-xs">Comentários</span>
                       </div>
                       
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -394,11 +472,11 @@ export default function NotificationsSection({
                     </div>
 
                     <div className="flex items-center justify-between gap-2.5">
-                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <span className="text-[10px] text-zinc-500 text-left shrink-0">Som do Alerta:</span>
                       <select
                         value={toneComment}
                         onChange={(e) => handleToneChange("comment", e.target.value)}
-                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-semibold focus:ring-1 focus:ring-purple-600 outline-none max-w-[130px] truncate"
                       >
                         <option value="bubble_pop">Bubble Pop 🫧</option>
                         <option value="harmonic_sweep">Slide Orgânico 🎼</option>
@@ -406,18 +484,51 @@ export default function NotificationsSection({
                         <option value="bell_chime">Sino Cristal 🔔</option>
                         <option value="electronic_ping">Ping Agudo 📡</option>
                         <option value="none">Silencioso (Nenhum)</option>
+                        {(toneComment.startsWith("/") || toneComment.startsWith("http")) && (
+                          <option value={toneComment}>Personalizado 🎵</option>
+                        )}
                       </select>
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-850/60 flex flex-col gap-1.5">
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight block">Som Personalizado (.mp3):</span>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          id="file-upload-comment"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) uploadCustomTone("comment", file);
+                          }}
+                        />
+                        <label
+                          htmlFor="file-upload-comment"
+                          className="w-full py-2 px-2.5 rounded bg-zinc-950 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5 select-none transition-all leading-none"
+                        >
+                          {uploadingCategory === "comment" ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                          ) : (
+                            <Upload className="h-3 w-3 text-zinc-500" />
+                          )}
+                          <span>Enviar Toque 📁</span>
+                        </label>
+                      </div>
+                      {(toneComment.startsWith("/") || toneComment.startsWith("http")) && (
+                        <div className="text-[9px] text-emerald-400 font-bold block leading-none">✓ Toque personalizado ativo!</div>
+                      )}
                     </div>
                   </div>
 
                   {/* FOLLOW SETTING */}
-                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                  <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-zinc-850 space-y-2.5">
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         <span className="p-1 rounded bg-blue-550/10 text-blue-400">
                           <UserPlus className="h-3.5 w-3.5" />
                         </span>
-                        <span className="font-bold text-zinc-100 font-display">Seguidores</span>
+                        <span className="font-bold text-zinc-100 font-display text-xs">Seguidores</span>
                       </div>
                       
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -433,11 +544,11 @@ export default function NotificationsSection({
                     </div>
 
                     <div className="flex items-center justify-between gap-2.5">
-                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <span className="text-[10px] text-zinc-500 text-left shrink-0">Som do Alerta:</span>
                       <select
                         value={toneFollow}
                         onChange={(e) => handleToneChange("follow", e.target.value)}
-                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-semibold focus:ring-1 focus:ring-purple-600 outline-none max-w-[130px] truncate"
                       >
                         <option value="bubble_pop">Bubble Pop 🫧</option>
                         <option value="harmonic_sweep">Slide Orgânico 🎼</option>
@@ -445,18 +556,51 @@ export default function NotificationsSection({
                         <option value="bell_chime">Sino Cristal 🔔</option>
                         <option value="electronic_ping">Ping Agudo 📡</option>
                         <option value="none">Silencioso (Nenhum)</option>
+                        {(toneFollow.startsWith("/") || toneFollow.startsWith("http")) && (
+                          <option value={toneFollow}>Personalizado 🎵</option>
+                        )}
                       </select>
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-850/60 flex flex-col gap-1.5">
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight block">Som Personalizado (.mp3):</span>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          id="file-upload-follow"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) uploadCustomTone("follow", file);
+                          }}
+                        />
+                        <label
+                          htmlFor="file-upload-follow"
+                          className="w-full py-2 px-2.5 rounded bg-zinc-950 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5 select-none transition-all leading-none"
+                        >
+                          {uploadingCategory === "follow" ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                          ) : (
+                            <Upload className="h-3 w-3 text-zinc-500" />
+                          )}
+                          <span>Enviar Toque 📁</span>
+                        </label>
+                      </div>
+                      {(toneFollow.startsWith("/") || toneFollow.startsWith("http")) && (
+                        <div className="text-[9px] text-emerald-400 font-bold block leading-none">✓ Toque personalizado ativo!</div>
+                      )}
                     </div>
                   </div>
 
                   {/* PRIVATE MESSAGE SETTING */}
-                  <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 space-y-2">
+                  <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-zinc-850 space-y-2.5">
                     <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         <span className="p-1 rounded bg-amber-550/10 text-amber-500">
                           <Mail className="h-3.5 w-3.5" />
                         </span>
-                        <span className="font-bold text-zinc-100 font-display">Mensagens DMs</span>
+                        <span className="font-bold text-zinc-100 font-display text-xs">Mensagens DMs</span>
                       </div>
                       
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -472,11 +616,11 @@ export default function NotificationsSection({
                     </div>
 
                     <div className="flex items-center justify-between gap-2.5">
-                      <span className="text-[10px] text-zinc-500">Sintetizador:</span>
+                      <span className="text-[10px] text-zinc-500 text-left shrink-0">Som do Alerta:</span>
                       <select
                         value={toneMessage}
                         onChange={(e) => handleToneChange("message", e.target.value)}
-                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-medium focus:ring-1 focus:ring-purple-600 outline-none"
+                        className="bg-zinc-950 border border-zinc-805 text-zinc-300 rounded p-1 px-1.5 text-[11px] font-semibold focus:ring-1 focus:ring-purple-600 outline-none max-w-[130px] truncate"
                       >
                         <option value="bubble_pop">Bubble Pop 🫧</option>
                         <option value="harmonic_sweep">Slide Orgânico 🎼</option>
@@ -484,7 +628,40 @@ export default function NotificationsSection({
                         <option value="bell_chime">Sino Cristal 🔔</option>
                         <option value="electronic_ping">Ping Agudo 📡</option>
                         <option value="none">Silencioso (Nenhum)</option>
+                        {(toneMessage.startsWith("/") || toneMessage.startsWith("http")) && (
+                          <option value={toneMessage}>Personalizado 🎵</option>
+                        )}
                       </select>
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-850/60 flex flex-col gap-1.5">
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-tight block">Som Personalizado (.mp3):</span>
+                      <div className="relative">
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          id="file-upload-message"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) uploadCustomTone("message", file);
+                          }}
+                        />
+                        <label
+                          htmlFor="file-upload-message"
+                          className="w-full py-2 px-2.5 rounded bg-zinc-950 hover:bg-zinc-850 text-zinc-400 hover:text-white border border-zinc-800 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5 select-none transition-all leading-none"
+                        >
+                          {uploadingCategory === "message" ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-purple-400" />
+                          ) : (
+                            <Upload className="h-3 w-3 text-zinc-500" />
+                          )}
+                          <span>Enviar Toque 📁</span>
+                        </label>
+                      </div>
+                      {(toneMessage.startsWith("/") || toneMessage.startsWith("http")) && (
+                        <div className="text-[9px] text-emerald-400 font-bold block leading-none">✓ Toque personalizado ativo!</div>
+                      )}
                     </div>
                   </div>
 

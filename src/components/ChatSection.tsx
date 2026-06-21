@@ -84,6 +84,8 @@ export default function ChatSection({
       // Sort oldest to newest message or last timestamp
       cList.sort((a, b) => b.lastMessageAt?.localeCompare?.(a.lastMessageAt) || 0);
       setChats(cList);
+    }, (error) => {
+      console.warn("Chats list snapshot load error:", error);
     });
 
     // 2. Fetch list of all potential directory users for initiating first-time chat
@@ -164,6 +166,8 @@ export default function ChatSection({
       setTimeout(() => {
         scrollRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 150);
+    }, (error) => {
+      console.warn("Messages collection snapshot query error:", error);
     });
 
     return () => {
@@ -439,7 +443,7 @@ export default function ChatSection({
                   <div className="flex items-center gap-1">
                     <span className="font-extrabold text-sm text-white">@{activeRecipient.username}</span>
                     {activeRecipient.verified && (
-                      <BadgeCheck className="h-3.5 w-3.5 text-sky-400 fill-sky-400" />
+                      <BadgeCheck className="h-3.5 w-3.5 text-white fill-blue-500 shrink-0" />
                     )}
                   </div>
                   {activeChat.typingState?.[activeRecipient.id] ? (
@@ -680,7 +684,7 @@ export default function ChatSection({
                         <div className="flex items-center gap-0.5">
                           <span className="font-extrabold text-xs text-white">@{user.username}</span>
                           {user.verified && (
-                            <BadgeCheck className="h-3 w-3 text-sky-400 fill-sky-400" />
+                            <BadgeCheck className="h-3 w-3 text-white fill-blue-500 shrink-0" />
                           )}
                         </div>
                         <span className="text-[10px] text-zinc-500 block truncate max-w-[150px]">{user.email}</span>
@@ -718,6 +722,8 @@ function InboxRow({ chat, otherUserId, isActive, unreadCount, onClick }: InboxRo
       if (snap.exists()) {
         setUserProfile(snap.data() as UserProfile);
       }
+    }, (error) => {
+      console.warn("User profile fetch status updates loader error:", error);
     });
     return () => unsub();
   }, [otherUserId]);
@@ -747,7 +753,7 @@ function InboxRow({ chat, otherUserId, isActive, unreadCount, onClick }: InboxRo
               @{userProfile.username}
             </span>
             {userProfile.verified && (
-              <BadgeCheck className="h-3.5 w-3.5 text-sky-400 fill-sky-400 grow-0 shrink-0" />
+              <BadgeCheck className="h-3.5 w-3.5 text-white fill-blue-500 grow-0 shrink-0" />
             )}
           </div>
           <p className="text-[10px] text-zinc-500 truncate block max-w-[130px] italic">

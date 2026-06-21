@@ -21,7 +21,8 @@ service cloud.firestore {
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
            (getUserData().role == 'admin' || getUserData().role == 'root_admin')) ||
           request.auth.token.email == 'joaopedromoladeoliveira@gmail.com' ||
-          request.auth.token.email == 'jpvanoredesocial@gmail.com'
+          request.auth.token.email == 'jpvanoredesocial@gmail.com' ||
+          request.auth.token.email == 'jpvanoofc@gmail.com'
         );
     }
     
@@ -30,7 +31,8 @@ service cloud.firestore {
         (
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
            getUserData().role == 'root_admin') ||
-          request.auth.token.email == 'joaopedromoladeoliveira@gmail.com'
+          request.auth.token.email == 'joaopedromoladeoliveira@gmail.com' ||
+          request.auth.token.email == 'jpvanoofc@gmail.com'
         );
     }
 
@@ -93,6 +95,12 @@ service cloud.firestore {
       allow create: if isAuth();
       allow update: if isAuth();
       allow delete: if isAuth();
+    }
+
+    // 10. Songs collection rules
+    match /songs/{songId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
     }
   }
 }

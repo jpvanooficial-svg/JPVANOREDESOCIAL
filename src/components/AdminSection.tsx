@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { db } from "../lib/firebase";
 import { UserProfile, Post, Comment } from "../types";
 import {
@@ -10,6 +10,7 @@ import {
   getDocs,
   query,
   where,
+  addDoc,
 } from "firebase/firestore";
 import {
   ShieldAlert,
@@ -24,6 +25,14 @@ import {
   Search,
   Check,
   Sparkles,
+  Music,
+  Plus,
+  Play,
+  Pause,
+  Upload,
+  Loader2,
+  Folder,
+  FolderOpen,
 } from "lucide-react";
 
 interface AdminSectionProps {
@@ -36,12 +45,87 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
 
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [reports, setReports] = useState<any[]>([]);
+  const [songs, setSongs] = useState<any[]>([]);
   const [postsCount, setPostsCount] = useState(0);
   const [commentsCount, setCommentsCount] = useState(0);
 
+  const [adminTab, setAdminTab] = useState<"accounts" | "music">("accounts");
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionDoneMsg, setActionDoneMsg] = useState<string | null>(null);
+
+  // New song fields
+  const [newSongTitle, setNewSongTitle] = useState("");
+  const [newSongArtist, setNewSongArtist] = useState("");
+  const [newSongURL, setNewSongURL] = useState("");
+  const [uploadingSong, setUploadingSong] = useState(false);
+  const [playingSongId, setPlayingSongId] = useState<string | null>(null);
+  const [batchUploadProgress, setBatchUploadProgress] = useState<{ current: number; total: number; name: string } | null>(null);
+
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+
+  // Batch or folder upload of songs
+  const handleMusicUploadBatch = async (files: File[]) => {
+    setUploadingSong(true);
+    let successCount = 0;
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setBatchUploadProgress({ current: i + 1, total: files.length, name: file.name });
+      
+      try {
+        const fileContent = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileData: fileContent,
+            originalMimeType: file.type || "audio/mpeg",
+            extension: file.name.split(".").pop() || "mp3",
+          })
+        });
+
+        const data = await res.json();
+        if (data.url) {
+          // Guess artist and title from filename
+          const fullName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+          let title = fullName;
+          let artist = "JPvano Club";
+          
+          if (fullName.includes(" - ")) {
+            const parts = fullName.split(" - ");
+            artist = parts[0].trim();
+            title = parts[1].trim();
+          } else if (fullName.includes("-")) {
+            const parts = fullName.split("-");
+            artist = parts[0].trim();
+            title = parts[1].trim();
+          }
+
+          await addDoc(collection(db, "songs"), {
+            title: title,
+            artist: artist,
+            audioURL: data.url,
+            createdAt: new Date().toISOString(),
+          });
+          successCount++;
+        }
+      } catch (err) {
+        console.error(`Erro ao fazer upload de ${file.name}:`, err);
+      }
+    }
+
+    setUploadingSong(false);
+    setBatchUploadProgress(null);
+    setActionDoneMsg(`Sucesso! ${successCount} música(s) foram adicionadas ao JPvano.`);
+    setTimeout(() => setActionDoneMsg(null), 4500);
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -53,6 +137,8 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
         uList.push(d.data() as UserProfile);
       });
       setUsers(uList);
+    }, (error) => {
+      console.warn("Admin list users snapshot error:", error);
     });
 
     // Realtime listen on post reports
@@ -62,6 +148,19 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
         rList.push({ id: d.id, ...d.data() });
       });
       setReports(rList);
+    }, (error) => {
+      console.warn("Admin list reports snapshot error:", error);
+    });
+
+    // Realtime listen on songs list
+    const unsubSongs = onSnapshot(collection(db, "songs"), (snap) => {
+      const sList: any[] = [];
+      snap.forEach((d) => {
+        sList.push({ id: d.id, ...d.data() });
+      });
+      setSongs(sList);
+    }, (error) => {
+      console.warn("Admin list songs snapshot error:", error);
     });
 
     // Simple aggregate counts of database metrics
@@ -75,6 +174,10 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
     return () => {
       unsubUsers();
       unsubReports();
+      unsubSongs();
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause();
+      }
     };
   }, [isAdmin]);
 
@@ -89,6 +192,61 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
       </div>
     );
   }
+
+  // Music Administration Functions
+  const handleAddSong = async () => {
+    if (!newSongTitle.trim() || !newSongArtist.trim() || !newSongURL.trim()) return;
+    try {
+      await addDoc(collection(db, "songs"), {
+        title: newSongTitle.trim(),
+        artist: newSongArtist.trim(),
+        audioURL: newSongURL.trim(),
+        createdAt: new Date().toISOString(),
+      });
+      setNewSongTitle("");
+      setNewSongArtist("");
+      setNewSongURL("");
+      setActionDoneMsg("Música adicionada com sucesso à biblioteca JPvano!");
+      setTimeout(() => setActionDoneMsg(null), 3000);
+    } catch (err: any) {
+      console.error(err);
+      setActionDoneMsg(`Erro ao adicionar música: ${err.message}`);
+      setTimeout(() => setActionDoneMsg(null), 3500);
+    }
+  };
+
+  const handleDeleteSong = async (songId: string) => {
+    try {
+      await deleteDoc(doc(db, "songs", songId));
+      setActionDoneMsg("Música removida permanentemente!");
+      setTimeout(() => setActionDoneMsg(null), 3000);
+      if (playingSongId === songId && audioPreviewRef.current) {
+        audioPreviewRef.current.pause();
+        setPlayingSongId(null);
+      }
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const togglePlaySong = (song: any) => {
+    if (playingSongId === song.id) {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause();
+      }
+      setPlayingSongId(null);
+    } else {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause();
+      }
+      audioPreviewRef.current = new Audio(song.audioURL);
+      audioPreviewRef.current.play().catch((err) => console.warn(err));
+      setPlayingSongId(song.id);
+      audioPreviewRef.current.onended = () => {
+        setPlayingSongId(null);
+      };
+    }
+  };
 
   // 1. Give / Toggle blue verified badge
   const toggleVerification = async (targetUser: UserProfile) => {
@@ -232,7 +390,7 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-xs text-zinc-300">@{currentUserProfile.username}</span>
-              <BadgeCheck className="h-4 w-4 text-sky-400 fill-sky-400" />
+              <BadgeCheck className="h-4 w-4 text-white fill-blue-500 shrink-0" />
             </div>
             <p className="text-[10px] text-zinc-500 block">{currentUserProfile.email}</p>
           </div>
@@ -247,7 +405,7 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
       )}
 
       {/* SYSTEM SUMMARY METRICS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
         <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl flex items-center gap-4">
           <div className="p-3 bg-purple-600/10 rounded-xl text-purple-400">
             <Users className="h-6 w-6" />
@@ -289,9 +447,44 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
             </span>
           </div>
         </div>
+
+        <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl flex items-center gap-4">
+          <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400">
+            <Music className="h-6 w-6" />
+          </div>
+          <div>
+            <span className="text-xs text-zinc-400 font-semibold block uppercase">Músicas JP</span>
+            <span className="text-2xl font-bold text-white font-display">{songs.length}</span>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* DASHBOARD TAB CONTROLS */}
+      <div className="flex gap-4 mb-6 border-b border-zinc-800 pb-3">
+        <button
+          onClick={() => setAdminTab("accounts")}
+          className={`pb-2 px-1 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            adminTab === "accounts"
+              ? "border-purple-500 text-purple-400 font-extrabold"
+              : "border-transparent text-zinc-400 hover:text-white"
+          }`}
+        >
+          Usuários e Moderação
+        </button>
+        <button
+          onClick={() => setAdminTab("music")}
+          className={`pb-2 px-1 text-sm font-bold border-b-2 transition-all cursor-pointer ${
+            adminTab === "music"
+              ? "border-purple-500 text-purple-400 font-extrabold"
+              : "border-transparent text-zinc-400 hover:text-white"
+          }`}
+        >
+          Biblioteca de Músicas (Admin)
+        </button>
+      </div>
+
+      {adminTab === "accounts" ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* USERS ACCREDITATIONS & PERMISSIONS TREE */}
         <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-6">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
@@ -349,7 +542,7 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
                             <div className="flex items-center gap-1">
                               <span className="font-semibold text-white">@{user.username}</span>
                               {user.verified && (
-                                <BadgeCheck className="h-3.5 w-3.5 text-sky-400 fill-sky-400" />
+                                <BadgeCheck className="h-3.5 w-3.5 text-white fill-blue-500 shrink-0" />
                               )}
                             </div>
                             <span className="text-[10px] text-zinc-500 block">
@@ -398,12 +591,12 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
                             onClick={() => toggleVerification(user)}
                             className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                               user.verified
-                                ? "bg-sky-500/10 border-sky-500/20 text-sky-400 hover:bg-sky-500/20"
+                                ? "bg-blue-600/20 border-blue-500/30 text-white hover:bg-blue-600/30"
                                 : "bg-zinc-800 border-zinc-750 text-zinc-500 hover:text-white"
                             }`}
                             title={user.verified ? "Revogar Verificado (Badge)" : "Conceder Verificado (Badge)"}
                           >
-                            <BadgeCheck className="h-4 w-4" />
+                            <BadgeCheck className={`h-4 w-4 ${user.verified ? "text-white fill-blue-500" : ""}`} />
                           </button>
                         </td>
 
@@ -511,6 +704,203 @@ export default function AdminSection({ currentUserProfile }: AdminSectionProps) 
           </div>
         </div>
       </div>
-    </div>
-  );
+    ) : (
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-fade-in">
+        {/* LEFT: MUSIC LIST */}
+        <div className="lg:col-span-7 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h2 className="text-xl font-bold text-white font-display flex items-center gap-2">
+            <Music className="h-5 w-5 text-purple-400" />
+            Músicas Cadastradas ({songs.length})
+          </h2>
+
+          <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+            {songs.length === 0 ? (
+              <div className="text-center py-10 bg-zinc-950/40 rounded-xl border border-zinc-850 p-4">
+                <p className="text-zinc-500 text-sm">Nenhuma música cadastrada ainda.</p>
+                <p className="text-[10px] text-zinc-650 mt-1">
+                  Use o painel lateral para enviar arquivos de áudio (.mp3) ou links.
+                </p>
+              </div>
+            ) : (
+              songs.map((song) => {
+                const isPlaying = playingSongId === song.id;
+                return (
+                  <div
+                    key={song.id}
+                    className="bg-zinc-950 border border-zinc-850 hover:border-zinc-800 rounded-xl p-3.5 flex items-center justify-between gap-4 transition-all"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        onClick={() => togglePlaySong(song)}
+                        className="w-9 h-9 rounded-full bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 border border-purple-500/20 flex items-center justify-center cursor-pointer shrink-0 transition-all"
+                      >
+                        {isPlaying ? (
+                          <Pause className="h-4 w-4 fill-purple-400" />
+                        ) : (
+                          <Play className="h-4 w-4 fill-purple-400 ml-0.5 animate-pulse" />
+                        )}
+                      </button>
+                      <div className="min-w-0">
+                        <span className="font-bold text-white text-xs block truncate leading-tight">
+                          {song.title}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 block truncate mt-0.5">
+                          por {song.artist}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-mono text-zinc-600 bg-zinc-900 border border-zinc-850 p-1 rounded">
+                        ID: {song.id.slice(0, 6)}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteSong(song.id)}
+                        className="p-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500 hover:text-white rounded-lg transition-all cursor-pointer"
+                        title="Remover Música"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: ADD MUSIC FORM */}
+        <div className="lg:col-span-5 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-6 space-y-4">
+          <h3 className="text-xl font-bold text-white font-display flex items-center gap-2">
+            <Plus className="h-5 w-5 text-purple-500" />
+            Adicionar Música
+          </h3>
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Cadastre trilhas sonoras oficiais. Os usuários poderão anexar esses sons às fotos e vídeos de feeds, storys, e reels.
+          </p>
+
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="text-xs font-bold text-zinc-400 block mb-1">Título da Faixa:</label>
+              <input
+                type="text"
+                placeholder="Ex: Vida de Crias"
+                value={newSongTitle}
+                onChange={(e) => setNewSongTitle(e.target.value)}
+                className="w-full text-xs p-3 rounded-xl bg-zinc-950 text-white border border-zinc-850 outline-none focus:border-purple-500 font-sans font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-400 block mb-1">Aparece como Artista:</label>
+              <input
+                type="text"
+                placeholder="Ex: MC Jp do Capão"
+                value={newSongArtist}
+                onChange={(e) => setNewSongArtist(e.target.value)}
+                className="w-full text-xs p-3 rounded-xl bg-zinc-950 text-white border border-zinc-850 outline-none focus:border-purple-500 font-sans font-medium"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-zinc-400 block">Link de Áudio ou Upload:</label>
+              <div className="flex flex-col gap-2">
+                <input
+                  type="text"
+                  placeholder="Cole de outro site ou envie .mp3"
+                  value={newSongURL}
+                  onChange={(e) => setNewSongURL(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl bg-zinc-950 text-white border border-zinc-850 outline-none focus:border-purple-500 font-sans font-medium"
+                />
+                
+                <div className="space-y-2">
+                  {/* Single/multiple standard upload */}
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      id="admin-song-file-upload-multiple"
+                      className="hidden"
+                      multiple
+                      disabled={uploadingSong}
+                      onChange={async (e) => {
+                        const files = Array.from(e.target.files || []) as File[];
+                        if (files.length === 0) return;
+                        await handleMusicUploadBatch(files);
+                      }}
+                    />
+                    <label
+                      htmlFor="admin-song-file-upload-multiple"
+                      className={`w-full py-2.5 rounded-xl bg-zinc-950 border border-zinc-850 hover:bg-zinc-900 text-zinc-300 hover:text-white hover:border-zinc-700 font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all text-center select-none ${uploadingSong ? "opacity-55 cursor-not-allowed" : ""}`}
+                    >
+                      <Upload className="h-4 w-4 text-purple-400" />
+                      <span>Selecionar Arquivo(s) de Áudio 📄</span>
+                    </label>
+                  </div>
+
+                  {/* Folder upload */}
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      id="admin-song-folder-upload"
+                      className="hidden"
+                      {...{ webkitdirectory: "", directory: "" } as any}
+                      disabled={uploadingSong}
+                      onChange={async (e) => {
+                        const files = Array.from(e.target.files || []) as File[];
+                        const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.endsWith('.mp3') || f.name.endsWith('.wav') || f.name.endsWith('.m4a'));
+                        if (audioFiles.length === 0) return;
+                        await handleMusicUploadBatch(audioFiles);
+                      }}
+                    />
+                    <label
+                      htmlFor="admin-song-folder-upload"
+                      className={`w-full py-2.5 rounded-xl bg-zinc-950 border border-zinc-850 hover:bg-zinc-900 text-zinc-300 hover:text-white hover:border-zinc-700 font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5 transition-all text-center select-none ${uploadingSong ? "opacity-55 cursor-not-allowed" : ""}`}
+                    >
+                      <FolderOpen className="h-4 w-4 text-purple-500" />
+                      <span>Selecionar Pasta de Músicas 📁</span>
+                    </label>
+                  </div>
+
+                  {/* Batch progress message */}
+                  {batchUploadProgress && (
+                    <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5 text-left">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-extrabold text-purple-400 animate-pulse">
+                          Enviando Lote...
+                        </span>
+                        <span className="font-mono text-zinc-500">
+                          {batchUploadProgress.current} de {batchUploadProgress.total}
+                        </span>
+                      </div>
+                      <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className="brand-gradient-bg h-full rounded-full transition-all duration-300"
+                          style={{ width: `${(batchUploadProgress.current / batchUploadProgress.total) * 100}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 truncate">
+                        {batchUploadProgress.name}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleAddSong}
+              disabled={!newSongTitle || !newSongArtist || !newSongURL || uploadingSong}
+              className="w-full py-3 rounded-xl brand-gradient-bg text-white font-bold text-xs tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-95 flex items-center justify-center gap-2 cursor-pointer mt-2"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar na Biblioteca
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+);
 }

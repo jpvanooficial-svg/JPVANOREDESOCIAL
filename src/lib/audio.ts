@@ -1,10 +1,21 @@
 // Web Audio API Synthesizer for high-precision real-time sound effects
 // Completely asset-free, safe, with adjustable volume settings configured in localStorage
 
-export type AudioTone = "bubble_pop" | "harmonic_sweep" | "arpeggio" | "bell_chime" | "electronic_ping" | "none";
+export type AudioTone = "bubble_pop" | "harmonic_sweep" | "arpeggio" | "bell_chime" | "electronic_ping" | "none" | string;
 
 export const playTone = (tone: AudioTone, volumePct: number = 0.5) => {
   if (tone === "none") return;
+
+  if (typeof tone === "string" && (tone.startsWith("http") || tone.startsWith("/") || tone.includes("data:audio") || tone.includes("base64"))) {
+    try {
+      const audio = new Audio(tone);
+      audio.volume = volumePct;
+      audio.play().catch(err => console.warn("Erro ao reproduzir som customizado:", err));
+      return;
+    } catch (e) {
+      console.warn("Custom playback fail:", e);
+    }
+  }
 
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;

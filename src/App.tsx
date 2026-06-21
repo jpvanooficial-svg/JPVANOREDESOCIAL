@@ -70,6 +70,9 @@ export default function App() {
         setProfile(uProfile);
       }
       setAppLoading(false);
+    }, (error) => {
+      console.warn("User profile snapshot error:", error);
+      setAppLoading(false);
     });
 
     return () => unsubProfile();
@@ -156,6 +159,9 @@ export default function App() {
             }
           }
         }
+      },
+      (error) => {
+        console.warn("Unread notifications counts snapshot error:", error);
       }
     );
 

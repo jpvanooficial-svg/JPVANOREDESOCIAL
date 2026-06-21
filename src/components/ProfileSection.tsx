@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
+import { signOut } from "firebase/auth";
 import { UserProfile, Post } from "../types";
 import { sendAppNotification } from "../lib/notifications";
 import {
@@ -34,6 +35,7 @@ import {
   UserX,
   X,
   Loader2,
+  LogOut,
 } from "lucide-react";
 
 interface ProfileSectionProps {
@@ -77,6 +79,8 @@ export default function ProfileSection({
         setBioInput(data.bio || "");
         setLinkInput(data.link || "");
       }
+    }, (error) => {
+      console.warn("Profile fetch snapshot error:", error);
     });
 
     // 2. Fetch custom posts of this profile in real-time
@@ -89,12 +93,16 @@ export default function ProfileSection({
       // Sort newest first
       pList.sort((a, b) => b.createdAt?.localeCompare?.(a.createdAt) || 0);
       setPosts(pList);
+    }, (error) => {
+      console.warn("Profile posts query snapshot error:", error);
     });
 
     // 3. Realtime counts of following list
     const qFollowing = query(collection(db, "follows"), where("followerId", "==", profileId));
     const unsubFollowing = onSnapshot(qFollowing, (snap) => {
       setFollowingCount(snap.size);
+    }, (error) => {
+      console.warn("Following counts snapshot error:", error);
     });
 
     // 4. Realtime counts of followers list
@@ -106,12 +114,16 @@ export default function ProfileSection({
         list.push({ id: d.id, ...d.data() });
       });
       setFollowersList(list);
+    }, (error) => {
+      console.warn("Followers counts snapshot error:", error);
     });
 
     // 5. Check if logged-in user is currently following this targeted user
     const followDocId = `${currentUserProfile.id}_${profileId}`;
     const unsubCheckFollow = onSnapshot(doc(db, "follows", followDocId), (docSnap) => {
       setIsFollowing(docSnap.exists());
+    }, (error) => {
+      console.warn("Is following status check snapshot error:", error);
     });
 
     return () => {
@@ -262,14 +274,29 @@ export default function ProfileSection({
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/80 to-transparent"></div>
         
         {isOwnProfile && (
-          <button
-            id="profile-banner-edit-overlay-btn"
-            onClick={() => setEditing(true)}
-            className="absolute top-4 right-4 p-2.5 bg-zinc-950/65 hover:bg-zinc-900 border border-zinc-850 rounded-xl text-white text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 backdrop-blur-md"
-          >
-            <Settings className="h-4 w-4" />
-            Editar Perfil
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button
+              id="profile-banner-edit-overlay-btn"
+              onClick={() => setEditing(true)}
+              className="p-2.5 bg-zinc-950/70 hover:bg-zinc-900 border border-zinc-800 rounded-xl text-white text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 backdrop-blur-md shadow-lg"
+            >
+              <Settings className="h-4 w-4 text-purple-400" />
+              <span>Editar Perfil</span>
+            </button>
+            <button
+              id="profile-logout-overlay-btn"
+              onClick={async () => {
+                if (window.confirm("Deseja desconectar do JPvano?")) {
+                  await signOut(auth);
+                }
+              }}
+              className="p-2.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-900/30 rounded-xl text-rose-300 hover:text-white text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 backdrop-blur-md shadow-lg"
+              title="Sair da conta"
+            >
+              <LogOut className="h-4 w-4" />
+              <span>Sair</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -287,7 +314,7 @@ export default function ProfileSection({
             />
             {profile.verified && (
               <span className="absolute bottom-2 right-2 p-1 bg-zinc-900 border-2 border-zinc-900 rounded-full shadow-lg">
-                <BadgeCheck className="h-6 w-6 text-sky-400 fill-sky-400" />
+                <BadgeCheck className="h-6 w-6 text-white fill-blue-500 shrink-0" />
               </span>
             )}
           </div>

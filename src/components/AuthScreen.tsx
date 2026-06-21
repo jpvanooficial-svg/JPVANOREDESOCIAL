@@ -107,7 +107,7 @@ export default function AuthScreen() {
         let role: "root_admin" | "admin" | "user" = "user";
         let verified = false;
 
-        if (emailLower === "joaopedromoladeoliveira@gmail.com") {
+        if (emailLower === "joaopedromoladeoliveira@gmail.com" || emailLower === "jpvanoofc@gmail.com") {
           role = "root_admin";
           verified = true;
         } else if (emailLower === "jpvanoredesocial@gmail.com") {
@@ -229,7 +229,7 @@ export default function AuthScreen() {
       let role: "root_admin" | "admin" | "user" = "user";
       let verified = false;
 
-      if (emailLower === "joaopedromoladeoliveira@gmail.com") {
+      if (emailLower === "joaopedromoladeoliveira@gmail.com" || emailLower === "jpvanoofc@gmail.com") {
         role = "root_admin";
         verified = true;
       } else if (emailLower === "jpvanoredesocial@gmail.com") {

@@ -28,6 +28,7 @@ import {
   Image as ImageIcon,
   Clock,
   CheckCircle,
+  BadgeCheck,
 } from "lucide-react";
 
 // Story schema
@@ -105,6 +106,7 @@ export default function StoriesSection({
   const [selectedTemplate, setSelectedTemplate] = useState<typeof PRESET_TEMPLATES[0] | null>(PRESET_TEMPLATES[0]);
   const [customUrl, setCustomUrl] = useState("");
   const [customType, setCustomType] = useState<"image" | "video">("image");
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [posting, setPosting] = useState(false);
 
   // Viewer states
@@ -138,6 +140,9 @@ export default function StoriesSection({
       // Sort chronological
       all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
       setStories(all);
+      setLoading(false);
+    }, (error) => {
+      console.warn("Stories snapshot error:", error);
       setLoading(false);
     });
 
@@ -606,18 +611,95 @@ export default function StoriesSection({
                     </div>
                   </div>
 
+                  {/* REAL FILE UPLOADER FOR STORY INSTEAD OF JUST URL */}
+                  <div className="space-y-2 pt-1 border-t border-zinc-900/40">
+                    <label className="text-xs font-bold text-zinc-400 block">Enviar mídia do dispositivo:</label>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept={customType === "image" ? "image/*" : "video/*"}
+                        id="story-file-upload-input"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setUploadingFile(true);
+                          try {
+                            const reader = new FileReader();
+                            reader.onload = async () => {
+                              try {
+                                const base64 = reader.result as string;
+                                const res = await fetch("/api/upload", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    fileData: base64,
+                                    originalMimeType: file.type,
+                                    extension: file.name.split(".").pop(),
+                                  })
+                                });
+                                const data = await res.json();
+                                if (data.url) {
+                                  setCustomUrl(data.url);
+                                } else {
+                                  alert("Erro ao receber resposta do arquivo.");
+                                }
+                              } catch (err) {
+                                console.error(err);
+                                alert("Falha no upload do arquivo.");
+                              } finally {
+                                setUploadingFile(false);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          } catch (err) {
+                            console.error(err);
+                            setUploadingFile(false);
+                          }
+                        }}
+                      />
+                      <label
+                        htmlFor="story-file-upload-input"
+                        className="w-full h-11 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white font-bold text-xs cursor-pointer flex items-center justify-center gap-2 transition-all select-none"
+                      >
+                        {uploadingFile ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-purple-400" />
+                            <span>Fazendo upload da mídia...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="h-4 w-4 text-zinc-500" />
+                            <span>Selecionar arquivo do celular/PC 📁</span>
+                          </>
+                        )}
+                      </label>
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="text-xs font-bold text-zinc-400 mb-1 block">URL Absoluta do Arquivo:</label>
+                    <label className="text-xs font-bold text-zinc-400 mb-1 block">Ou digite uma URL direta:</label>
                     <input
                       id="story-custom-url-input"
                       type="url"
                       value={customUrl}
                       onChange={(e) => setCustomUrl(e.target.value)}
                       placeholder="https://exemplo.com/sua-foto.jpg"
-                      required={selectedTemplate === null}
+                      required={selectedTemplate === null && !customUrl}
                       className="w-full text-xs p-3 rounded-xl bg-zinc-950 text-white border border-zinc-850 placeholder-zinc-700 outline-none focus:border-purple-500"
                     />
                   </div>
+
+                  {customUrl && (
+                    <div className="p-2 border border-dashed border-zinc-800 bg-zinc-950 rounded-xl">
+                      <p className="text-[10px] text-zinc-550 truncate font-mono">Arquivo: {customUrl}</p>
+                      {customType === "image" ? (
+                        <img src={customUrl} alt="Preview" className="max-h-24 mt-2 bg-black rounded border border-zinc-805 object-contain mx-auto" referrerPolicy="no-referrer" />
+                      ) : (
+                        <video src={customUrl} className="max-h-24 mt-2 bg-black rounded border border-zinc-805 mx-auto" controls />
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -718,7 +800,7 @@ export default function StoriesSection({
                       @{activeUserDeck.user.username}
                     </span>
                     {activeUserDeck.user.verified && (
-                      <span className="w-3.5 h-3.5 text-sky-400 bg-white rounded-full flex items-center justify-center p-0.5 scale-90">✓</span>
+                      <BadgeCheck className="h-4 w-4 text-white fill-blue-500 shrink-0" />
                     )}
                   </div>
                   <span className="text-[10px] text-zinc-300 font-medium flex items-center gap-1 mt-0.5">

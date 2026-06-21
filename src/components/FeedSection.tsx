@@ -36,6 +36,9 @@ import {
   X,
   BadgeCheck,
   Volume2,
+  Music,
+  Film,
+  Disc,
 } from "lucide-react";
 
 interface FeedSectionProps {
@@ -49,10 +52,25 @@ export default function FeedSection({
   initialSelectedPostId,
   onUserSelect,
 }: FeedSectionProps) {
-  const [feedMode, setFeedMode] = useState<"global" | "following">("global");
+  const [feedMode, setFeedMode] = useState<"global" | "following" | "reels">("global");
   const [posts, setPosts] = useState<Post[]>([]);
   const [filteredPosts, setFilteredPosts] = useState<Post[]>([]);
   const [followingIds, setFollowingIds] = useState<string[]>([]);
+
+  // Songs selections
+  const [songs, setSongs] = useState<any[]>([]);
+  const [selectedSong, setSelectedSong] = useState<any | null>(null);
+  const [songStartSeconds, setSongStartSeconds] = useState<number>(0);
+  const [songEndSeconds, setSongEndSeconds] = useState<number>(15);
+  const [songPlayDuration, setSongPlayDuration] = useState<number>(15);
+  const [isSavingSongMetadata, setIsSavingSongMetadata] = useState(false);
+  const [isPostReel, setIsPostReel] = useState(false);
+  const [songsModalOpen, setSongsModalOpen] = useState(false);
+
+  // Audio system for post music segments
+  const [activePlaybackPostId, setActivePlaybackPostId] = useState<string | null>(null);
+  const playbackTimerRef = useRef<any>(null);
+  const audioObjRef = useRef<HTMLAudioElement | null>(null);
 
   // Post composer state
   const [textComposer, setTextComposer] = useState("");
@@ -91,10 +109,26 @@ export default function FeedSection({
         ids.push(d.data().followingId);
       });
       setFollowingIds(ids);
+    }, (error) => {
+      console.warn("Follows snapshot error:", error);
     });
 
     return () => unsubscribeFollows();
   }, [currentUserProfile.id]);
+
+  // 1.5. Real-time subscription to admin-uploaded songs
+  useEffect(() => {
+    const unsubSongs = onSnapshot(collection(db, "songs"), (snap) => {
+      const sList: any[] = [];
+      snap.forEach((d) => {
+        sList.push({ id: d.id, ...d.data() });
+      });
+      setSongs(sList);
+    }, (error) => {
+      console.warn("Songs snapshot error:", error);
+    });
+    return () => unsubSongs();
+  }, []);
 
   // 2. Listen to global Posts feed in real-time (pure WebSockets onSnapshot event-driven)
   useEffect(() => {
@@ -103,23 +137,31 @@ export default function FeedSection({
       snapshot.forEach((d) => {
         pList.push({ id: d.id, ...d.data() } as Post);
       });
-
+ 
       // Sort newest first
       pList.sort((a, b) => b.createdAt?.localeCompare?.(a.createdAt) || 0);
       setPosts(pList);
+    }, (error) => {
+      console.warn("Posts snapshot error:", error);
     });
-
+ 
     return () => unsubPosts();
   }, []);
-
-  // 3. Reactively filter posts based on selected feed filter (Global or Following)
+ 
+  // 3. Reactively filter posts based on selected feed filter (Global, Following or Reels)
   useEffect(() => {
     if (feedMode === "following") {
       // Filter where post creator is followed by currentUser
-      const relative = posts.filter((p) => followingIds.includes(p.userId) || p.userId === currentUserProfile.id);
+      const relative = posts.filter((p) => (followingIds.includes(p.userId) || p.userId === currentUserProfile.id) && !p.isReel);
+      setFilteredPosts(relative);
+    } else if (feedMode === "reels") {
+      // Filter only short video reels
+      const relative = posts.filter((p) => p.isReel === true);
       setFilteredPosts(relative);
     } else {
-      setFilteredPosts(posts);
+      // Global feed: standard posts only
+      const relative = posts.filter((p) => !p.isReel);
+      setFilteredPosts(relative);
     }
   }, [posts, feedMode, followingIds, currentUserProfile.id]);
 
@@ -152,6 +194,8 @@ export default function FeedSection({
       // Sort oldest first (natural conversation thread)
       cList.sort((a, b) => a.createdAt?.localeCompare?.(b.createdAt) || 0);
       setCommentsList(cList);
+    }, (error) => {
+      console.warn("Comments snapshot error:", error);
     });
 
     return () => unsubComments();
@@ -272,6 +316,85 @@ export default function FeedSection({
     setMediaPreviewType(null);
   };
 
+  const handleSelectSongAndPreload = (song: any) => {
+    setSelectedSong(song);
+    const start = typeof song.startSec === "number" ? song.startSec : 0;
+    const end = typeof song.endSec === "number" ? song.endSec : 15;
+    setSongStartSeconds(start);
+    setSongEndSeconds(end);
+    setSongPlayDuration(end - start > 0 ? end - start : 15);
+  };
+
+  const handleSaveSongMetadataToFirestore = async () => {
+    if (!selectedSong) return;
+    setIsSavingSongMetadata(true);
+    try {
+      await updateDoc(doc(db, "songs", selectedSong.id), {
+        startSec: songStartSeconds,
+        endSec: songEndSeconds,
+        duration: songEndSeconds - songStartSeconds > 0 ? songEndSeconds - songStartSeconds : 15
+      });
+      setSelectedSong((prev: any) => prev ? {
+        ...prev,
+        startSec: songStartSeconds,
+        endSec: songEndSeconds
+      } : prev);
+      setAlertText("✨ Ajustes de áudio salvos com sucesso no Firestore!");
+      setTimeout(() => setAlertText(null), 3500);
+    } catch (err: any) {
+      console.error(err);
+      setAlertText(`❌ Erro ao salvar: ${err.message}`);
+      setTimeout(() => setAlertText(null), 3500);
+    } finally {
+      setIsSavingSongMetadata(false);
+    }
+  };
+
+  const startSegmentPlayback = (postId: string, songURL: string, startSec: number, duration: number) => {
+    // If already playing this post, stop it!
+    if (activePlaybackPostId === postId) {
+      stopSegmentPlayback();
+      return;
+    }
+
+    stopSegmentPlayback();
+
+    const audio = new Audio(songURL);
+    audioObjRef.current = audio;
+    setActivePlaybackPostId(postId);
+
+    audio.currentTime = startSec || 0;
+    audio.volume = 0.8;
+    audio.play().catch(err => {
+      console.warn("Audio play prevented:", err);
+    });
+
+    playbackTimerRef.current = setTimeout(() => {
+      stopSegmentPlayback();
+    }, (duration || 15) * 1000);
+  };
+
+  const stopSegmentPlayback = () => {
+    if (audioObjRef.current) {
+      audioObjRef.current.pause();
+      audioObjRef.current = null;
+    }
+    if (playbackTimerRef.current) {
+      clearTimeout(playbackTimerRef.current);
+      playbackTimerRef.current = null;
+    }
+    setActivePlaybackPostId(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+      if (audioObjRef.current) {
+        audioObjRef.current.pause();
+      }
+    };
+  }, []);
+
   // Create post submit payload handler
   const handlePublishPost = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -317,13 +440,25 @@ export default function FeedSection({
         commentsCount: 0,
         reportsCount: 0,
         createdAt: new Date().toISOString(),
+        // Music & Reels metadata extension fields
+        songId: selectedSong ? selectedSong.id : "",
+        songTitle: selectedSong ? selectedSong.title : "",
+        songArtist: selectedSong ? selectedSong.artist : "",
+        songURL: selectedSong ? (selectedSong.audioURL || selectedSong.url || "") : "",
+        songStartSec: selectedSong ? songStartSeconds : 0,
+        songDuration: selectedSong ? songPlayDuration : 15,
+        isReel: isPostReel,
       });
 
       // 3. Clear composer state upon successful addition
       setTextComposer("");
       setMediaData(null);
       setMediaPreviewType(null);
-      setAlertText("✨ Publicado com sucesso no feed global!");
+      setSelectedSong(null);
+      setSongStartSeconds(0);
+      setSongPlayDuration(15);
+      setIsPostReel(false);
+      setAlertText("✨ Publicado com sucesso!");
       setTimeout(() => setAlertText(null), 3000);
 
     } catch (err: any) {
@@ -505,6 +640,19 @@ export default function FeedSection({
           <Users className="h-4 w-4" />
           Meus Círculos
         </button>
+
+        <button
+          id="feed-switch-reels-btn"
+          onClick={() => setFeedMode("reels")}
+          className={`flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            feedMode === "reels"
+              ? "bg-purple-660 text-white shadow font-bold brand-gradient-bg glow-logo"
+              : "text-zinc-400 hover:text-white"
+          }`}
+        >
+          <Film className="h-4 w-4" />
+          Reels Curto
+        </button>
       </div>
 
       {/* NEW POST COMPOSER PANEL */}
@@ -555,6 +703,31 @@ export default function FeedSection({
               </div>
             )}
 
+            {/* SELECTED SONG INFO IN COMPOSER */}
+            {selectedSong && (
+              <div className="flex items-center justify-between gap-3 bg-purple-950/20 border border-purple-500/30 rounded-xl p-3 animate-fade-in mt-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400 animate-pulse">
+                    <Music className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-zinc-100 block truncate">{selectedSong.title}</span>
+                    <span className="text-[10px] text-zinc-400 block truncate leading-none mt-1">
+                      {selectedSong.artist} • {songStartSeconds}s até {songEndSeconds}s ({songPlayDuration}s)
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSong(null)}
+                  className="p-1 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg cursor-pointer transition-all"
+                  title="Remover Música"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
             {/* CONTROLS BAR OF POST COMPOSER */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-850 pt-3 select-none">
               
@@ -571,7 +744,7 @@ export default function FeedSection({
                   <ImageIcon className="h-4.5 w-4.5 text-pink-500" />
                   <span className="hidden sm:inline">Imagem</span>
                 </button>
-
+ 
                 <button
                   id="attach-video-composer-btn"
                   type="button"
@@ -583,7 +756,7 @@ export default function FeedSection({
                   <VideoIcon className="h-4.5 w-4.5 text-amber-500" />
                   <span className="hidden sm:inline">Vídeo</span>
                 </button>
-
+ 
                 {recording ? (
                   <button
                     id="stop-audio-composer-btn"
@@ -606,7 +779,7 @@ export default function FeedSection({
                     <span className="hidden sm:inline">Voz</span>
                   </button>
                 )}
-
+ 
                 <input
                   id="feed-generic-picker"
                   type="file"
@@ -614,6 +787,38 @@ export default function FeedSection({
                   ref={fileInputRef}
                   className="hidden"
                 />
+
+                {/* SELECT MUSIC BUTTON FOR POST */}
+                <button
+                  id="attach-song-composer-btn"
+                  type="button"
+                  onClick={() => setSongsModalOpen(true)}
+                  disabled={composing}
+                  className="p-2 bg-zinc-950/40 hover:bg-zinc-800/80 rounded-xl text-zinc-450 hover:text-white border border-zinc-800/60 cursor-pointer text-xs transition-all flex items-center gap-1"
+                  title="Adicionar Música de Fundo"
+                >
+                  <Music className="h-4 w-4 text-purple-400" />
+                  <span className="hidden sm:inline">Música</span>
+                </button>
+
+                {/* DYNAMIC REELS TOGGLE IF VIDEO MEDIA IS ATTACHED */}
+                {mediaPreviewType === "video" && (
+                  <button
+                    id="toggle-reels-composer-btn"
+                    type="button"
+                    onClick={() => setIsPostReel(!isPostReel)}
+                    disabled={composing}
+                    className={`p-2 rounded-xl text-xs transition-all flex items-center gap-1 border cursor-pointer ${
+                      isPostReel
+                        ? "bg-purple-950/50 border-purple-500 text-purple-300 font-black"
+                        : "bg-zinc-950/40 hover:bg-zinc-800/80 text-zinc-400 hover:text-white border-zinc-800/60"
+                    }`}
+                    title="Publicar no Reel Feed"
+                  >
+                    <Film className="h-4 w-4 text-pink-400" />
+                    <span>Vídeo Reels</span>
+                  </button>
+                )}
               </div>
 
               {/* Submit panel */}
@@ -656,7 +861,7 @@ export default function FeedSection({
       </div>
 
       {/* STORIES BAR */}
-      <StoriesSection currentUserProfile={currentUserProfile} onUserSelect={onUserSelect} />
+      <StoriesSection currentUserProfile={currentUserProfile} />
 
       {/* FEED LISTINGS */}
       <div className="space-y-6">
@@ -666,7 +871,164 @@ export default function FeedSection({
             <h4 className="text-sm font-bold text-zinc-450 font-display">Sem novidades no momento</h4>
             <p className="text-xs text-zinc-650 mt-1">Seja o primeiro a contar uma fofoca ou postar sua arte!</p>
           </div>
+        ) : feedMode === "reels" ? (
+          /* CINEMATIC REELS VIEW GRID */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 justify-center max-w-4xl mx-auto">
+            {filteredPosts.map((post) => {
+              const isLikedByMe = post.likes?.includes(currentUserProfile.id);
+              const isSovereignUser =
+                currentUserProfile.role === "root_admin" ||
+                currentUserProfile.role === "admin" ||
+                post.userId === currentUserProfile.id;
+
+              return (
+                <div
+                  key={post.id}
+                  className="bg-black border border-zinc-800 rounded-[32px] overflow-hidden relative shadow-2xl animate-fade-in w-full max-w-[360px] h-[580px] mx-auto flex flex-col justify-end"
+                >
+                  {/* REEL PLAYER INTERFACES */}
+                  <div className="absolute inset-0 z-0 bg-zinc-950 flex items-center justify-center">
+                    {post.type === "video" && post.mediaURL ? (
+                      <video
+                        src={post.mediaURL}
+                        controls={false}
+                        autoPlay
+                        loop
+                        playsInline
+                        muted={activePlaybackPostId !== post.id}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : post.type === "image" && post.mediaURL ? (
+                      <img
+                        src={post.mediaURL}
+                        alt="Reel content"
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="p-4 text-center">
+                        <span className="text-4xl block mb-2">🎬</span>
+                        <p className="text-xs text-zinc-500 font-mono">Vídeo ausente</p>
+                      </div>
+                    )}
+                    {/* Shadow overlay gradient */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/40 pointer-events-none" />
+                  </div>
+
+                  {/* FLOATING ADMIN DELETE BUTTON */}
+                  {isSovereignUser && (
+                    <button
+                      id={`delete-reel-post-${post.id}`}
+                      onClick={() => handleDeletePost(post.id)}
+                      className="absolute top-4 left-4 p-2.5 bg-black/60 hover:bg-rose-600/80 rounded-full text-white cursor-pointer hover:scale-105 transition-all z-20"
+                      title="Excluir Reel"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+
+                  <button
+                    id={`report-reel-post-btn-${post.id}`}
+                    onClick={() => setReportPostId(post.id)}
+                    className="absolute top-4 right-4 p-2.5 bg-black/60 hover:bg-amber-600/80 rounded-full text-white cursor-pointer hover:scale-105 transition-all z-20"
+                    title="Denunciar Reel"
+                  >
+                    <AlertTriangle className="h-4 w-4" />
+                  </button>
+
+                  {/* FLOATING ENGAGEMENT BAR ON RIGHT OVERLAY */}
+                  <div className="absolute right-4 bottom-24 flex flex-col items-center gap-4.5 z-10 select-none">
+                    {/* Like reel button */}
+                    <button
+                      onClick={() => handleLikePost(post)}
+                      className="group flex flex-col items-center cursor-pointer active:scale-95 transition-all"
+                    >
+                      <div className={`p-3 rounded-full backdrop-blur-md transition-all shadow-md ${
+                        isLikedByMe ? "bg-rose-500 text-white" : "bg-black/40 text-zinc-300 group-hover:bg-black/60"
+                      }`}>
+                        <Heart className={`h-5 w-5 ${isLikedByMe ? "fill-white" : ""}`} />
+                      </div>
+                      <span className="text-[10px] font-black text-rose-400 mt-1 shadow-sm font-sans">{post.likes?.length || 0}</span>
+                    </button>
+
+                    {/* Comment reel button */}
+                    <button
+                      onClick={() => setActiveCommentPost(post)}
+                      className="group flex flex-col items-center cursor-pointer active:scale-95 transition-all"
+                    >
+                      <div className="p-3 rounded-full bg-black/40 hover:bg-black/60 text-zinc-300 backdrop-blur-md transition-all shadow-md">
+                        <MessageCircle className="h-5 w-5" />
+                      </div>
+                      <span className="text-[10px] font-black text-purple-400 mt-1 shadow-sm font-sans">{post.commentsCount || 0}</span>
+                    </button>
+
+                    {/* Vinyl disc music rotator */}
+                    {post.songURL && (
+                      <button
+                        onClick={() => startSegmentPlayback(post.id, post.songURL || "", post.songStartSec || 0, post.songDuration || 15)}
+                        className="group flex flex-col items-center cursor-pointer active:scale-95 transition-all"
+                        title={post.songTitle}
+                      >
+                        <div className={`p-3 rounded-full backdrop-blur-md transition-all shadow-md border ${
+                          activePlaybackPostId === post.id 
+                            ? "bg-rose-600 border-rose-500 text-white animate-spin" 
+                            : "bg-black/40 border-zinc-850 text-purple-300 hover:bg-black/60"
+                        }`}>
+                          <Disc className="h-5 w-5" />
+                        </div>
+                        <span className="text-[8px] font-bold text-zinc-400 mt-1 block max-w-10 truncate">{post.songTitle}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* BOTTOM REEL DETAILS TEXT OVERLAY */}
+                  <div className="p-5 space-y-3.5 z-10 overflow-hidden w-full select-text select-none">
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={post.userPhotoURL || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
+                        alt={post.username}
+                        className="w-9 h-9 rounded-full border border-purple-500 object-cover shrink-0 cursor-pointer"
+                        onClick={() => onUserSelect?.(post.userId)}
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1">
+                          <span
+                            onClick={() => onUserSelect?.(post.userId)}
+                            className="font-bold text-xs text-white cursor-pointer truncate max-w-32 hover:underline"
+                          >
+                            @{post.username}
+                          </span>
+                          {post.userVerified && <BadgeCheck className="h-3.5 w-3.5 text-white fill-blue-500 shrink-0" />}
+                        </div>
+                        <span className="text-[9px] text-zinc-400 block font-mono">Reels Curto</span>
+                      </div>
+                    </div>
+
+                    {post.caption && (
+                      <p className="text-xs text-zinc-100 leading-tight max-w-full truncate font-sans line-clamp-2">
+                        {post.caption}
+                      </p>
+                    )}
+
+                    {/* MUSIC TICKER BOTTOM */}
+                    {post.songURL && (
+                      <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-zinc-200">
+                        <Music className="h-3.5 w-3.5 text-purple-400 shrink-0 animate-pulse" />
+                        <div className="overflow-hidden relative flex-1">
+                          <p className="whitespace-nowrap font-semibold truncate animate-marquee">
+                            {post.songTitle} • {post.songArtist}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
+          /* TRADITIONAL COMPACT GRAPHIC FEED LISTING */
           filteredPosts.map((post) => {
             const isLikedByMe = post.likes?.includes(currentUserProfile.id);
             const isSovereignUser =
@@ -698,7 +1060,7 @@ export default function FeedSection({
                           @{post.username}
                         </span>
                         {post.userVerified && (
-                          <BadgeCheck className="h-4 w-4 text-sky-400 fill-sky-400" />
+                          <BadgeCheck className="h-3.5 w-3.5 text-white fill-blue-500 shrink-0" />
                         )}
                         {post.userId === "joaopedromoladeoliveira@gmail.com" && (
                           <span className="p-0.5 px-2 bg-amber-500/10 text-[8px] text-amber-400 rounded-full font-black">ROOT</span>
@@ -770,9 +1132,47 @@ export default function FeedSection({
                     <div className="flex items-center gap-3 bg-zinc-950 p-3 rounded-2xl border border-zinc-850 align-middle shadow max-w-sm select-none">
                       <span className="text-2xl">🎙️</span>
                       <div className="flex-1">
-                        <span className="text-[10px] text-zinc-500 block mb-1">Mensagem de Voz JPvano</span>
+                        <span className="text-[10px] text-zinc-550 block mb-1">Mensagem de Voz JPvano</span>
                         <audio src={post.mediaURL} controls className="w-full h-8 custom-audio-player contrast-110" />
                       </div>
+                    </div>
+                  )}
+
+                  {/* Rendering custom background music segment bar */}
+                  {post.songURL && (
+                    <div className="flex items-center justify-between gap-3 bg-purple-950/20 border border-purple-500/20 rounded-2xl p-3 select-none animate-fade-in max-w-md">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => startSegmentPlayback(post.id, post.songURL || "", post.songStartSec || 0, post.songDuration || 15)}
+                          className={`p-2.5 rounded-full cursor-pointer transition-all flex items-center justify-center border shadow ${
+                            activePlaybackPostId === post.id
+                              ? "bg-rose-500/15 border-rose-500 text-rose-400"
+                              : "bg-purple-500/20 border-purple-500 text-purple-300 hover:bg-purple-500/30"
+                          }`}
+                        >
+                          {activePlaybackPostId === post.id ? (
+                            <Disc className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Volume2 className="h-5 w-5" />
+                          )}
+                        </button>
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-zinc-100 block truncate">{post.songTitle}</span>
+                          <span className="text-[10px] text-zinc-400 block truncate leading-none mt-1">
+                            {post.songArtist} • 🎵 Trecho de {post.songDuration || 15}s
+                          </span>
+                        </div>
+                      </div>
+
+                      {activePlaybackPostId === post.id && (
+                        <div className="flex gap-0.5 items-end h-3 pr-2">
+                          <div className="w-0.5 h-full bg-rose-400 rounded-full animate-pulse" />
+                          <div className="w-0.5 h-2 bg-rose-450 rounded-full animate-pulse delay-75" />
+                          <div className="w-0.5 h-3.5 bg-rose-450 rounded-full animate-pulse delay-150" />
+                          <div className="w-0.5 h-1.5 bg-rose-440 rounded-full animate-pulse delay-300" />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -783,7 +1183,7 @@ export default function FeedSection({
                     id={`like-post-btn-${post.id}`}
                     onClick={() => handleLikePost(post)}
                     className={`flex items-center gap-1.5 cursor-pointer hover:scale-105 active:scale-95 transition-all ${
-                      isLikedByMe ? "text-rose-500 font-bold" : "text-zinc-400 hover:text-rose-500"
+                      isLikedByMe ? "text-rose-500 font-bold" : "text-zinc-650 hover:text-rose-500"
                     }`}
                   >
                     <Heart className={`h-4.5 w-4.5 ${isLikedByMe ? "fill-rose-500" : ""}`} />
@@ -793,7 +1193,7 @@ export default function FeedSection({
                   <button
                     id={`comment-post-btn-${post.id}`}
                     onClick={() => setActiveCommentPost(post)}
-                    className="flex items-center gap-1.5 text-zinc-400 hover:text-purple-400 cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                    className="flex items-center gap-1.5 text-zinc-650 hover:text-purple-400 cursor-pointer hover:scale-105 active:scale-95 transition-all"
                   >
                     <MessageCircle className="h-4.5 w-4.5" />
                     <span>{post.commentsCount || 0}</span>
@@ -906,7 +1306,6 @@ export default function FeedSection({
         </div>
       )}
 
-      {/* SUBMIT REPORTING FORM DIALOG */}
       {reportPostId && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-sm p-5 relative font-sans shadow-2xl animate-fade-in">
@@ -961,6 +1360,196 @@ export default function FeedSection({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* SONG SELECTION MODAL */}
+      {songsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-xl p-5 md:p-6 relative font-sans shadow-2xl animate-fade-in max-h-[90vh] overflow-y-auto">
+            <button
+              id="close-songs-modal-btn"
+              type="button"
+              onClick={() => {
+                setSongsModalOpen(false);
+                stopSegmentPlayback();
+              }}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer transition-all border border-zinc-800/20"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-2 border-b border-zinc-850 pb-3">
+              <span className="p-2 rounded-xl bg-purple-550/10 text-purple-400">
+                <Music className="h-5 w-5" />
+              </span>
+              <div>
+                <h3 className="text-lg font-black text-white font-display">Músicas Oficiais JPvano</h3>
+                <p className="text-xs text-zinc-400 leading-tight">Escolha uma trilha sonora para engajar seu post, story ou reels.</p>
+              </div>
+            </div>
+
+            {/* SELECTION ZONE */}
+            <div className="space-y-4 pt-2">
+              <span className="text-xs font-bold text-zinc-300 font-display block">Escolha uma música disponível:</span>
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                {songs.length === 0 ? (
+                  <div className="text-center py-6 border border-dashed border-zinc-800 rounded-2xl bg-zinc-950/20">
+                    <p className="text-xs text-zinc-500 italic">Nenhuma música adicionada pelo administrador ainda.</p>
+                  </div>
+                ) : (
+                  songs.map((song) => {
+                    const isSelected = selectedSong?.id === song.id;
+                    return (
+                      <div
+                        key={song.id}
+                        onClick={() => handleSelectSongAndPreload(song)}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer flex gap-3 items-center ${
+                          isSelected
+                            ? "bg-purple-950/30 border-purple-500/70"
+                            : "bg-zinc-950/40 border-zinc-800/80 hover:bg-zinc-900"
+                        }`}
+                      >
+                        <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center font-bold text-sm text-white shrink-0 shadow-lg glow-logo">
+                          🎵
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-bold text-zinc-100 block truncate">{song.title}</span>
+                          <span className="text-[10px] text-zinc-400 block truncate leading-none mt-1">{song.artist}</span>
+                        </div>
+                        {isSelected && (
+                          <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {selectedSong && (
+                <div className="bg-zinc-950/50 p-4 border border-zinc-800 rounded-2xl space-y-4 animate-fade-in text-left">
+                  {/* COMPONENTE DE EDIÇÃO DE ÁUDIO SIMPLES (START/END) */}
+                  <div className="space-y-4 border border-zinc-800/80 bg-zinc-950 p-4 rounded-xl">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-purple-400">
+                      <Music className="h-4 w-4" />
+                      <span>Editor de Áudio Simples (Recorte de Trecho)</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* START SLIDER/INPUT */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold">
+                          <span>⏱️ SEGUNDO INICIAL (START):</span>
+                          <span className="text-purple-400 font-mono text-xs">{songStartSeconds}s</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="120"
+                          value={songStartSeconds}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setSongStartSeconds(val);
+                            // Ensure end seconds is always larger
+                            const finalEnd = songEndSeconds <= val ? val + 15 : songEndSeconds;
+                            setSongEndSeconds(finalEnd);
+                            setSongPlayDuration(Math.max(1, finalEnd - val));
+                            stopSegmentPlayback();
+                          }}
+                          className="w-full text-purple-600 accent-purple-500 cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                          <span>0s</span>
+                          <span>120s</span>
+                        </div>
+                      </div>
+
+                      {/* END SLIDER/INPUT */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold">
+                          <span>⏱️ SEGUNDO FINAL (END):</span>
+                          <span className="text-pink-400 font-mono text-xs">{songEndSeconds}s</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={songStartSeconds + 1}
+                          max="180"
+                          value={songEndSeconds}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setSongEndSeconds(val);
+                            setSongPlayDuration(Math.max(1, val - songStartSeconds));
+                            stopSegmentPlayback();
+                          }}
+                          className="w-full text-pink-600 accent-pink-500 cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                          <span>{songStartSeconds + 1}s</span>
+                          <span>180s</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-medium text-zinc-400 bg-zinc-900/60 p-2 rounded-lg border border-zinc-850">
+                      <span>Duração Trecho: <strong className="text-white font-mono">{songPlayDuration}s</strong></span>
+                      
+                      <button
+                        type="button"
+                        onClick={handleSaveSongMetadataToFirestore}
+                        disabled={isSavingSongMetadata}
+                        className="py-1 px-3 rounded bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-[10px] uppercase tracking-wider font-extrabold flex items-center gap-1.5 transition-all cursor-pointer"
+                        title="Salvar Metadados no Banco de Dados para esta Música"
+                      >
+                        {isSavingSongMetadata ? (
+                          <>
+                            <div className="w-3 h-3 border border-t-transparent border-white rounded-full animate-spin"></div>
+                            <span>Salvando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>Salvar Metadados na Música 💾</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        startSegmentPlayback(
+                          "preview-tracker-player",
+                          selectedSong.audioURL || selectedSong.url || "",
+                          songStartSeconds,
+                          songPlayDuration
+                        )
+                      }
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 cursor-pointer ${
+                        activePlaybackPostId === "preview-tracker-player"
+                          ? "bg-rose-500/10 border-rose-500 text-rose-400"
+                          : "bg-purple-500/15 border-purple-500/40 text-purple-300 hover:bg-purple-500/20"
+                      }`}
+                    >
+                      <Volume2 className="h-4 w-4" />
+                      {activePlaybackPostId === "preview-tracker-player" ? "Parar Teste" : "Ouvir Meu Trecho 🎵"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSongsModalOpen(false);
+                        stopSegmentPlayback();
+                      }}
+                      className="py-2 px-5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md cursor-pointer transition-all"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

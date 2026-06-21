@@ -25,6 +25,14 @@ export interface Post {
   commentsCount: number;
   reportsCount: number;
   createdAt: any;
+  // Music & Reels metadata extension
+  songId?: string;
+  songTitle?: string;
+  songArtist?: string;
+  songURL?: string;
+  songStartSec?: number;
+  songDuration?: number;
+  isReel?: boolean;
 }
 
 export interface Comment {
